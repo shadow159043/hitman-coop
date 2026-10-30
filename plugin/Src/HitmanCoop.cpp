@@ -60,6 +60,31 @@ static std::string ToLowerCopy(std::string p_Value) {
     return p_Value;
 }
 
+// Fail closed before game-memory patches if an experimental 3.290 build is loaded
+// with the older August SDK runtime. Matching headers are not enough: the DLL
+// installed beside HITMAN3.exe must be the SDK 4.2.0 binary too.
+static std::string ModuleFileVersion(HMODULE s_Module) {
+    wchar_t s_Path[MAX_PATH] {};
+    if (!s_Module || !GetModuleFileNameW(s_Module, s_Path, MAX_PATH))
+        return "unknown";
+    DWORD s_Handle = 0;
+    const DWORD s_Size = GetFileVersionInfoSizeW(s_Path, &s_Handle);
+    if (!s_Size)
+        return "unknown";
+    std::vector<uint8_t> s_Data(s_Size);
+    VS_FIXEDFILEINFO* s_Info = nullptr;
+    UINT s_Length = 0;
+    if (!GetFileVersionInfoW(s_Path, 0, s_Size, s_Data.data()) ||
+        !VerQueryValueW(s_Data.data(), L"\\", reinterpret_cast<void**>(&s_Info), &s_Length) ||
+        !s_Info || s_Length < sizeof(VS_FIXEDFILEINFO))
+        return "unknown";
+    char s_Version[48];
+    std::snprintf(s_Version, sizeof(s_Version), "%u.%u.%u.%u",
+        HIWORD(s_Info->dwFileVersionMS), LOWORD(s_Info->dwFileVersionMS),
+        HIWORD(s_Info->dwFileVersionLS), LOWORD(s_Info->dwFileVersionLS));
+    return s_Version;
+}
+
 HitmanCoop::HitmanCoop() = default;
 
 std::string HitmanCoop::ModsFolder() {
@@ -106,6 +131,17 @@ void HitmanCoop::Init() {
     m_LanAddress = coop::LocalLanAddress();
     m_TailscaleAddress = coop::LocalTailscaleAddress();
     LoadSettings();
+    // This isolated compatibility fork specifically targets the October 2026 game.
+    // Refuse all native patches, detours and multiplayer if the game and *loaded*
+    // SDK runtime do not match the verified pairing of SDK headers/runtime.
+    const std::string s_FullGameVersion = ModuleFileVersion(GetModuleHandleW(nullptr));
+    const std::string s_SdkRuntime = ModuleFileVersion(GetModuleHandleW(L"ZHMModSDK.dll"));
+    if (s_FullGameVersion != "3.290.1.0" || s_SdkRuntime != "4.2.0.0") {
+        m_Unsupported = "game 3.290.1.0 with ZHMModSDK runtime 4.2.0.0 required (loaded " +
+            s_FullGameVersion + " / " + s_SdkRuntime + ")";
+        Logger::Error("[HitmanCoop] Experimental build blocked before native hooks: {}", m_Unsupported);
+        return;
+    }
     const int s_Patches = CrashGuards::Install();
     Logger::Info("[HitmanCoop] Game patches applied: {} of {} ({}).", s_Patches, CrashGuards::Count(), CrashGuards::Report());
 
@@ -163,6 +199,10 @@ void HitmanCoop::Init() {
 }
 
 void HitmanCoop::OnEngineInitialized() {
+    // Incompatible SDK/game already blocked *before* applying game-memory patches.
+    if (!m_Unsupported.empty())
+        return;
+
     // Checked once the engine is up: some of these (the type registry) only exist from then on.
     m_Unsupported = MissingEngineParts();
 

@@ -1890,6 +1890,16 @@ void SdkWorld::ApplyPartnerOutfit() {
     if (!s_Collection)
         return;
 
+    // Do not modify a shared outfit kit unless we are actually going to equip it.
+    // The previous late-return for unsafe 47 suits happened *after* temporarily
+    // replacing Actor variation resources with HeroA variations, leaving game-wide
+    // outfit resources modified when there was no civilian fallback.
+    if (s_Kit->m_bIsHitmanSuit && !m_HeroSuitStandIn) {
+        if (m_Trace)
+            m_Trace("partner: no safe NPC outfit available for 47's suit; left the existing outfit kit unchanged");
+        return;
+    }
+
     auto* s_ActorType = &s_Collection->m_aCharacters[static_cast<size_t>(ECharSetCharacterType::ECSCT_Actor)];
     auto* s_HeroType = &s_Collection->m_aCharacters[static_cast<size_t>(ECharSetCharacterType::ECSCT_HeroA)];
 
@@ -1916,14 +1926,6 @@ void SdkWorld::ApplyPartnerOutfit() {
             if (s_ActorVariations[i].m_pInterfaceRef && s_HeroVariations[i].m_pInterfaceRef)
                 s_ActorVariations[i].m_pInterfaceRef->m_Outfit = s_HeroVariations[i].m_pInterfaceRef->m_Outfit;
         }
-    }
-
-    // Never one of 47's suits (see StandInOutfit): keep what it wears.
-    if (s_Kit->m_bIsHitmanSuit && !m_HeroSuitStandIn) {
-        if (m_Trace)
-            m_Trace("partner: no NPC outfit to stand in for 47's suit here, keeping the current one");
-
-        return;
     }
 
     Functions::ZActor_SetOutfit->Call(m_PartnerActor, s_KitRef, s_Use.charset, s_Variation, false);

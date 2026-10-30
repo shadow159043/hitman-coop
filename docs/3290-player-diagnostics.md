@@ -55,3 +55,27 @@ in the cloned folder to reproduce the build and tests; the script does not insta
 Build compilation and simulated tests do not validate the private animation
 vtable slot, rig pointer offsets, CrashGuards patches or pause/restart hooks on
 3.290.1.0. An SDK v4.2.0 build is **experimental and not deployment-ready**.
+
+## Corrections applied in the isolated 3.290 fork
+
+- The source now uses the official v4.2.0 DevPkg instead of old 4.1.1
+  layouts to read 47's outfit kit, charset and variation at their new offsets
+- A separate avatar-position fallback keeps a fresh radar/name-tag marker when
+  the partner's NPC stand-in does not spawn
+- An absent camera no longer erroneously hides the whole Co-op overlay
+- `SdkWorld::ApplyPartnerOutfit` now rejects an unsafe 47-suit early,
+  **before mutating shared NPC outfit variation resources** (the old code
+  returned before restoring those resources)
+- The experimental DLL refuses to install hooks or private patches unless
+  the running `HITMAN3.exe` is **exactly 3.290.1.0** and the **loaded**
+  `ZHMModSDK.dll` reports file version **4.2.0.0**
+- The original host log currently available on the main PC still identifies
+  Co-op **0.12.0** and its installed SDK runtime is **4.1.1.0**, both
+  distinct from the experimental 0.12.1/4.2.0 build
+- All 83 simulated/core tests and a Windows RelWithDebInfo native compile pass
+  with SDK 4.2.0. This **does not** verify live gameplay or private native hooks.
+
+`tools/stage-3290-test.ps1` produces an archive under `_dist` with an
+isolated experimental binary, matching SDK runtime, SHA-256 manifest and
+LICENSE files. It **never installs** anything. The existing installed
+Co-op, SDK, Assassin Rivals 2.0 and backups were not changed.
