@@ -1,5 +1,5 @@
 /_deps/
-/_build/
+/_build*/
 /_dist/
 /core/build*/
 /ref/

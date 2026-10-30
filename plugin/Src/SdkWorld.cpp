@@ -8,6 +8,7 @@
 
 #include "coop/GameEvents.h"
 #include "coop/Math.h"
+#include "coop/PartnerPresence.h"
 
 #include <algorithm>
 #include <map>
@@ -1770,6 +1771,11 @@ void SdkWorld::ShowRemoteAvatar(const coop::Transform& p_Xf) {
 }
 
 void SdkWorld::HideRemoteAvatar() {
+    // When the network session leaves the mission, discard its last coordinates even if
+    // no NPC ever spawned. Otherwise the radar fallback can show a disconnected player.
+    m_HasPartnerSentXf = false;
+    m_PartnerWantedTime = 0.0;
+
     if (!m_Partner || m_PartnerHidden)
         return;
 
@@ -3636,6 +3642,7 @@ SdkWorld::Overlay SdkWorld::BuildOverlay() const {
     s_Out.local = s_Local.pos;
 
     if (const auto s_Camera = Functions::GetCurrentCamera->Call()) {
+        s_Out.cameraAvailable = true;
         const SMatrix s_M = s_Camera->GetObjectToWorldMatrix();
         s_Out.camera = { s_M.Trans.x, s_M.Trans.y, s_M.Trans.z };
     }
@@ -3650,8 +3657,18 @@ SdkWorld::Overlay SdkWorld::BuildOverlay() const {
     }
 
     coop::Vec3 s_Partner;
+    // The stand-in is a game NPC and can fail to spawn even after a valid player position
+    // arrives. The name tag and radar should not disappear with the NPC. Prefer the real
+    // stand-in position when available, otherwise use a *fresh* network position.
+    bool s_HavePartnerPosition = m_PartnerEnabled && HasPartner() && GetPartnerPosition(s_Partner);
 
-    if (HasPartner() && GetPartnerPosition(s_Partner)) {
+    if (!s_HavePartnerPosition && m_PartnerEnabled &&
+        coop::RemotePositionCurrent(m_HasPartnerSentXf, m_Now, m_PartnerWantedTime)) {
+        s_Partner = m_PartnerSentXf.pos;
+        s_HavePartnerPosition = true;
+    }
+
+    if (s_HavePartnerPosition) {
         s_Out.partnerShown = true;
         s_Out.partnerFeet = s_Partner;
         s_Out.partnerHead = s_Partner + coop::Vec3 { 0.f, 0.f, 2.05f };

@@ -58,6 +58,7 @@ if (COOP_BUILD_TESTS)
             tests/Main.cpp
             tests/TestCore.cpp
             tests/TestGameEvents.cpp
+            tests/TestPartnerPresence.cpp
             tests/TestSession.cpp
     )
 

@@ -1,5 +1,6 @@
 #include "HitmanCoop.h"
 #include "CoopText.h"
+#include "coop/PartnerPresence.h"
 #include "CrashTrace.h"
 #include "CrashGuards.h"
 #include "GamePause.h"
@@ -1674,7 +1675,8 @@ void HitmanCoop::PublishStatus() {
 
     // Not over a game menu, nor in a cutscene (the camera far from our 47): names and marks would
     // float over the scene's own pictures.
-    if (s_Overlay.inMission && (GamePause::MenuOpen() || coop::Distance(s_Overlay.camera, s_Overlay.local) > 10.f)) {
+    if (coop::ShouldHideOverlay(s_Overlay.inMission, GamePause::MenuOpen(), s_Overlay.cameraAvailable,
+        coop::Distance(s_Overlay.camera, s_Overlay.local))) {
         s_Overlay.hidden = true;
         s_Overlay.partnerShown = false;
         s_Overlay.marks.clear();

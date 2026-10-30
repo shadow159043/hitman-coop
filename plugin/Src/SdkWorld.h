@@ -151,6 +151,7 @@ public:
         float signalAge = 0.f;
         float markSeconds = 20.f;
         std::vector<coop::Vec3> targets; // target assist (radar), if on
+        bool cameraAvailable = false; // missing camera is not a cutscene
         coop::Vec3 camera;
         coop::Vec3 cameraForward;
         coop::Vec3 cameraRight;     // the screen's right, in the world (the radar's sideways)
