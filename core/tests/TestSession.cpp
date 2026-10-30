@@ -122,6 +122,14 @@ TEST(Session_HandshakeAndFollowHostMission) {
     d.Step(0.5);
     CHECK(d.hostWorld.remoteShown && d.clientWorld.remoteShown);
     CHECK(d.hostWorld.remoteSpawns == 1 && d.clientWorld.remoteSpawns == 1);
+    // Count actual network player transforms, not just connected/synced handshakes.
+    CHECK(d.host.Status().avatarPositionsQueued > 0);
+    CHECK(d.host.Status().avatarPositionsReceived > 0);
+    CHECK(d.client.Status().avatarPositionsQueued > 0);
+    CHECK(d.client.Status().avatarPositionsReceived > 0);
+    CHECK(d.host.Status().avatarReceiveAgeSeconds >= 0.0 && d.host.Status().avatarReceiveAgeSeconds < 1.0);
+    CHECK(d.client.Status().avatarReceiveAgeSeconds >= 0.0 && d.client.Status().avatarReceiveAgeSeconds < 1.0);
+    CHECK(d.host.Status().avatarLocalReadFailures == 0);
     CHECK(HasNote(d.clientWorld, "Co-op active"));
 }
 
@@ -134,6 +142,8 @@ TEST(Session_WrongMissionIsNotSynced) {
 
     CHECK(!d.host.Synced() && !d.client.Synced());
     CHECK(!d.hostWorld.remoteShown && !d.clientWorld.remoteShown);
+    CHECK(d.host.Status().avatarPositionsQueued == 0 && d.client.Status().avatarPositionsReceived == 0);
+    CHECK(d.client.Status().avatarReceiveAgeSeconds < 0.0);
     CHECK(HasNote(d.clientWorld, "different mission"));
     CHECK(HasNote(d.clientWorld, "any mission in Paris"));
 }

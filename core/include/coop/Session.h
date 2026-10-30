@@ -143,6 +143,11 @@ struct SessionStatus {
     SceneDesc peerScene; // host: the mission the client last said it is in, if it isn't ours
     size_t npcsTracked = 0;
     uint64_t posesReceived = 0;
+    // Independent player-transform telemetry: separates network/scene issues from NPC spawning.
+    uint64_t avatarPositionsQueued = 0;
+    uint64_t avatarPositionsReceived = 0;
+    uint64_t avatarLocalReadFailures = 0;
+    double avatarReceiveAgeSeconds = -1.0; // -1: no avatar received in this scene
     // Shared NPCs: how many each game runs, and the last ownership check (host).
     size_t npcsPuppeted = 0;
     size_t npcsOwnedByClient = 0;
@@ -361,6 +366,10 @@ private:
     PoseBuffer m_RemotePose;
     Pose m_PoseScratch;
     uint64_t m_PosesReceived = 0;
+    uint64_t m_AvatarPositionsQueued = 0;
+    uint64_t m_AvatarPositionsReceived = 0;
+    uint64_t m_AvatarLocalReadFailures = 0;
+    double m_LastAvatarReceivedAt = -1.0;
     SnapshotBuffer m_VictimXf;
     PoseBuffer m_VictimPose;
     uint64_t m_VictimId = 0;

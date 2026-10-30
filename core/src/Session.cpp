@@ -180,6 +180,10 @@ void Session::ResetSceneState() {
     m_WasSynced = false;
     m_RemoteAvatar.Clear();
     m_RemotePose.Clear();
+    m_AvatarPositionsQueued = 0;
+    m_AvatarPositionsReceived = 0;
+    m_AvatarLocalReadFailures = 0;
+    m_LastAvatarReceivedAt = -1.0;
     ResetVictim();
     m_HostNpcAlive.clear();
     m_HostNpcs.clear();
@@ -340,6 +344,11 @@ SessionStatus Session::Status() const {
     s_Status.peerScene = m_Role == SessionRole::Host ? m_PeerScene : SceneDesc {};
     s_Status.npcsTracked = m_Role == SessionRole::Host ? m_HostNpcAlive.size() : m_HostNpcs.size();
     s_Status.posesReceived = m_PosesReceived;
+    s_Status.avatarPositionsQueued = m_AvatarPositionsQueued;
+    s_Status.avatarPositionsReceived = m_AvatarPositionsReceived;
+    s_Status.avatarLocalReadFailures = m_AvatarLocalReadFailures;
+    if (m_LastAvatarReceivedAt >= 0.0 && m_LastTick >= m_LastAvatarReceivedAt)
+        s_Status.avatarReceiveAgeSeconds = m_LastTick - m_LastAvatarReceivedAt;
 
     if (m_Conn) {
         s_Status.stats = m_Conn->Stats();
@@ -684,6 +693,8 @@ void Session::HandleMessage(const Message& p_Msg, double p_Now) {
 
             if (Decode(p_Msg.payload, s_State) && IsSynced() && s_State.epoch == m_Epoch) {
                 m_RemoteAvatar.Push(p_Now, s_State.timeMs, s_State.xf);
+                ++m_AvatarPositionsReceived;
+                m_LastAvatarReceivedAt = p_Now;
                 m_RemoteAvatarLast = s_State.xf;
                 m_HaveRemoteAvatar = true;
             }
@@ -1123,6 +1134,7 @@ void Session::UpdateAvatar(double p_Now) {
 
         if (m_World.GetLocalAvatar(s_State.xf)) {
             m_Conn->SendUnreliable(MsgType::AvatarState, Encode(s_State));
+            ++m_AvatarPositionsQueued;
 
             // The pose goes with the same timestamp, so both play back in step.
             MsgPose s_Pose;
@@ -1137,6 +1149,10 @@ void Session::UpdateAvatar(double p_Now) {
 
             if (m_World.GetLocalVictim(m_VictimSend.id, m_VictimSend.xf, m_VictimSend.body.pose, m_VictimSend.flags))
                 m_Conn->SendUnreliable(MsgType::VictimPose, Encode(m_VictimSend));
+        }
+        else {
+            // A stale SDK player pointer can cause no avatar packets without disconnecting.
+            ++m_AvatarLocalReadFailures;
         }
 
         m_NextAvatarSend = std::max(m_NextAvatarSend + m_Config.avatarInterval, p_Now);
