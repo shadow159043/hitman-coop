@@ -57,13 +57,52 @@ void WriteRotation(PoseHook::Bone& p_Bone, const float* p_Rot) {
         p_Bone.rot[i] = p_Rot[i] * s_Sign;
 }
 
+// The output pose's offsets were reverse-engineered on 3.280.0. Validate
+// every referenced memory region before touching a potentially changed layout
+// on 3.290.1.0. A bad layout should disable posing, not crash the game.
+bool AccessibleRange(const void* p_Address, size_t p_Bytes, bool p_Writable) {
+    if (!p_Address || !p_Bytes)
+        return false;
+
+    const uintptr_t s_Start = reinterpret_cast<uintptr_t>(p_Address);
+    if (s_Start > UINTPTR_MAX - p_Bytes)
+        return false;
+
+    const uintptr_t s_End = s_Start + p_Bytes;
+    for (uintptr_t s_Cursor = s_Start; s_Cursor < s_End;) {
+        MEMORY_BASIC_INFORMATION s_Page {};
+        if (!VirtualQuery(reinterpret_cast<const void*>(s_Cursor), &s_Page, sizeof(s_Page)) ||
+            s_Page.State != MEM_COMMIT || (s_Page.Protect & (PAGE_GUARD | PAGE_NOACCESS)))
+            return false;
+        const DWORD s_Protection = s_Page.Protect & 0xFF;
+        const bool s_CanWrite = s_Protection == PAGE_READWRITE || s_Protection == PAGE_WRITECOPY ||
+            s_Protection == PAGE_EXECUTE_READWRITE || s_Protection == PAGE_EXECUTE_WRITECOPY;
+        const bool s_CanRead = s_CanWrite || s_Protection == PAGE_READONLY ||
+            s_Protection == PAGE_EXECUTE_READ;
+        if (p_Writable ? !s_CanWrite : !s_CanRead)
+            return false;
+
+        const uintptr_t s_RegionStart = reinterpret_cast<uintptr_t>(s_Page.BaseAddress);
+        if (s_Page.RegionSize > UINTPTR_MAX - s_RegionStart)
+            return false;
+        const uintptr_t s_Next = s_RegionStart + s_Page.RegionSize;
+        if (s_Next <= s_Cursor)
+            return false;
+        s_Cursor = std::min(s_End, s_Next);
+    }
+    return true;
+}
+
 bool ReadablePose(const uint8_t* p_Out, PoseHook::Bone*& p_Bones, uint32_t& p_Count) {
-    if (!p_Out)
+    if (!AccessibleRange(p_Out, 0x14, false))
         return false;
 
     std::memcpy(&p_Bones, p_Out + 0x08, sizeof(p_Bones));
     std::memcpy(&p_Count, p_Out + 0x10, sizeof(p_Count));
-    return p_Bones && p_Count > 0 && p_Count < 1024;
+
+    // Copying or overwriting the wrong pose layout corrupts native game memory.
+    return p_Count > 1 && p_Count < 1024 &&
+        AccessibleRange(p_Bones, static_cast<size_t>(p_Count) * sizeof(PoseHook::Bone), true);
 }
 
 void Update(void* p_This, void* p_In, uint8_t* p_Out, const void* p_World, uint64_t p_A5, uint64_t p_A6, uint64_t p_A7) {
@@ -177,15 +216,35 @@ bool PoseHook::Install(void* p_AnyMorphemeAnimator) {
     if (!p_AnyMorphemeAnimator)
         return false;
 
+    if (!AccessibleRange(p_AnyMorphemeAnimator, sizeof(void*), false))
+        return false;
+
     void** s_Table = *static_cast<void***>(p_AnyMorphemeAnimator);
-
-    if (!s_Table || s_Table[c_UpdateSlot] == reinterpret_cast<void*>(&Update))
+    if (!AccessibleRange(s_Table, (c_UpdateSlot + 1) * sizeof(void*), false))
         return false;
 
-    g_Original = reinterpret_cast<UpdateFn>(s_Table[c_UpdateSlot]);
-
-    if (!Patch(&s_Table[c_UpdateSlot], reinterpret_cast<void*>(&Update)))
+    void* s_Original = s_Table[c_UpdateSlot];
+    if (!s_Original || s_Original == reinterpret_cast<void*>(&Update))
         return false;
+
+    // The original update function is expected to be executable game image
+    // code. Reject a changed vtable slot or someone else's trampoline rather
+    // than treating an arbitrary pointer as the old seven-argument signature.
+    MEMORY_BASIC_INFORMATION s_Code {};
+    if (!VirtualQuery(s_Original, &s_Code, sizeof(s_Code)) || s_Code.State != MEM_COMMIT ||
+        s_Code.Type != MEM_IMAGE || s_Code.AllocationBase != GetModuleHandleW(nullptr))
+        return false;
+    const DWORD s_Protection = s_Code.Protect & 0xFF;
+    if (s_Protection != PAGE_EXECUTE && s_Protection != PAGE_EXECUTE_READ &&
+        s_Protection != PAGE_EXECUTE_READWRITE && s_Protection != PAGE_EXECUTE_WRITECOPY)
+        return false;
+
+    g_Original = reinterpret_cast<UpdateFn>(s_Original);
+
+    if (!Patch(&s_Table[c_UpdateSlot], reinterpret_cast<void*>(&Update))) {
+        g_Original = nullptr;
+        return false;
+    }
 
     g_Table = s_Table;
     return true;
@@ -194,10 +253,13 @@ bool PoseHook::Install(void* p_AnyMorphemeAnimator) {
 void PoseHook::Uninstall() {
     std::lock_guard s_Lock(g_Mutex);
 
-    if (g_Table && g_Original)
+    // Another mod may have replaced the vtable slot since ours was installed.
+    // Do not overwrite that newer hook during shutdown.
+    if (g_Table && g_Original && g_Table[c_UpdateSlot] == reinterpret_cast<void*>(&Update))
         Patch(&g_Table[c_UpdateSlot], reinterpret_cast<void*>(g_Original));
 
     g_Table = nullptr;
+    g_Original = nullptr;
 
     for (auto& s_Source : g_Sources)
         s_Source = nullptr;

@@ -65,6 +65,11 @@ bool IsParentTable(const std::vector<uint8_t>& p_Data, size_t p_Bones, std::vect
 std::vector<RigScan::Found> RigScan::FindParents(const void* p_Animator, size_t p_Bones, int p_Depth) {
     std::vector<Found> s_Found;
 
+    // The older animator memory layout is speculative on 3.290.1.0. Reject
+    // implausible inputs before allocating or traversing native pointers.
+    if (!p_Animator || p_Bones < 2 || p_Bones > 512 || p_Depth < 0 || p_Depth > 5)
+        return s_Found;
+
     // Where it is in 3.280.0 (animator +0x50, then +0x70, int32): checked, then used without a search.
     {
         uint64_t s_Rig = 0, s_Table = 0;

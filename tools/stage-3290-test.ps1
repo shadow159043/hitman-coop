@@ -1,7 +1,7 @@
 # Stage only; intentionally does not touch installed HITMAN files.
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$Output = Join-Path $Root '_dist\HitmanCoop-0.12.1-3290-sdk420-EXPERIMENTAL'
+$Output = Join-Path $Root '_dist\HitmanCoop-0.12.1-3290-sdk420-EXPERIMENTAL-R2'
 $Retail = Join-Path $Output 'Retail'
 $SDK = Join-Path $Root '_deps-sdk420\sdk-release'
 $Built = Join-Path $Root '_build-sdk420\plugin\RelWithDebInfo\HitmanCoop.dll'
@@ -16,12 +16,15 @@ foreach ($File in @('dinput8.dll','ZHMModSDK.dll','ResourceLib_HM3.dll','discord
 Copy-Item -LiteralPath $Built -Destination (Join-Path $Retail 'mods\HitmanCoop.dll')
 Copy-Item -LiteralPath (Join-Path $Root 'LICENSE') -Destination (Join-Path $Output 'HITMAN-COOP-LICENSE.txt')
 Copy-Item -LiteralPath (Join-Path $SDK 'LICENSE') -Destination (Join-Path $Output 'SDK-LICENSE.txt')
+Copy-Item -LiteralPath (Join-Path $Root 'docs\native-audit-3290.md') -Destination (Join-Path $Output 'NATIVE-AUDIT.md')
 @'
 EXPERIMENTAL / NOT GAMEPLAY-VERIFIED / DO NOT HOT-SWAP DLLS
 
 HITMAN Co-op v0.12.1 fork for HITMAN3.exe 3.290.1.0 + official ZHMModSDK 4.2.0.
 Uses current SDK actor/outfit memory offsets, revised marker fallback and
 outfit-kit early-return safety, plus 83 automated tests and avatar diagnostics.
+R2 also prevents stand-in spawning with unresolvable outfit kits, validates
+pose-buffer/vtable memory before hooking, and audits 10 game-code signatures.
 Contains native PoseHook/RigScan/CrashGuards private assumptions not yet
 validated in the October game. No guarantees against crashes or save issues.
 

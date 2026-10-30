@@ -409,11 +409,21 @@ SdkWorld::Spawn SdkWorld::SpawnPartner(const coop::Transform& p_Xf) {
 
     const coop::OutfitDesc s_Wear = StandInOutfit(s_Outfit);
 
-    // An NPC in one of 47's suits crashes the game when it sees a kill: rather no stand-in yet
-    // (a scene without NPCs, like an intro) than that. StandInOutfit looks again next frame.
-    if (const auto* s_Kit = FindOutfitKit(s_Wear.repositoryId); s_Kit && s_Kit->m_pInterfaceRef &&
-        s_Kit->m_pInterfaceRef->m_bIsHitmanSuit && !m_HeroSuitStandIn)
+    // Do not spawn an NPC with an outfit that the local game cannot resolve. On some
+    // newer game builds the session is already synced but a missing/invalid outfit
+    // makes an activated stand-in have no drawable body. Old code fell through when
+    // FindOutfitKit returned nullptr and never retried after the empty entity spawned.
+    const auto* s_Kit = FindOutfitKit(s_Wear.repositoryId);
+    if (!s_Kit || !s_Kit->m_pInterfaceRef)
+        return WaitFor("a valid outfit kit in this mission");
+
+    // An NPC in 47's suit crashes when its AI reacts; wait for a local civilian outfit.
+    if (s_Kit->m_pInterfaceRef->m_bIsHitmanSuit && !m_HeroSuitStandIn)
         return WaitFor("an NPC outfit to dress the stand-in in (your partner wears one of 47's suits)");
+
+    if (s_Wear.charset < 0 || static_cast<size_t>(s_Wear.charset) >= s_Kit->m_pInterfaceRef->m_aCharSets.size() ||
+        !s_Kit->m_pInterfaceRef->m_aCharSets[s_Wear.charset].m_pInterfaceRef || s_Wear.variation < 0)
+        return WaitFor("a valid charset and variation for the partner's stand-in");
 
     bool s_TemplateFailed = false;
     ZTemplateEntityFactory* s_Template = PartnerTemplate(s_TemplateFailed);
