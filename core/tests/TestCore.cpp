@@ -10,12 +10,30 @@
 #include "coop/FriendlyFire.h"
 #include "coop/RuntimeCompatibility.h"
 #include "coop/BodySync.h"
+#include "coop/ItemVisibility.h"
 #include "coop/Duel.h"
 #include "coop/DuelMotion.h"
 #include "coop/DuelSkeleton.h"
 #include "coop/Protocol.h"
 
 using namespace coop;
+
+TEST(ItemVisibility_NativeSpatialFlagsAreReversible) {
+    const item_visibility::Flags alreadyHidden {false, true, false};
+    const item_visibility::Flags initiallyVisible {true, false, true};
+    const auto hidden = item_visibility::Hidden();
+    CHECK(item_visibility::IsHidden(hidden));
+    CHECK(item_visibility::IsHidden(alreadyHidden));
+    CHECK(!item_visibility::IsHidden(initiallyVisible));
+    // Captured flags must be restored, not set unconditionally to visible.
+    const auto captured = initiallyVisible;
+    const auto duringPeerPickup = hidden;
+    CHECK(item_visibility::IsHidden(duringPeerPickup));
+    const auto restored = captured;
+    CHECK(restored.visible);
+    CHECK(!restored.parentHidden);
+    CHECK(restored.forceVisible);
+}
 
 TEST(BodySync_DragReleaseTriggersSingleMovementNotPhysicsDrift) {
     CHECK(body_sync::ShouldSendMoved(true, true, true, 0.8f, 0.55));

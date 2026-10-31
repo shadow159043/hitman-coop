@@ -9,6 +9,7 @@
 #include "coop/GameEvents.h"
 #include "coop/Math.h"
 #include "coop/BodySync.h"
+#include "coop/ItemVisibility.h"
 #include "coop/PartnerPresence.h"
 
 #include <algorithm>
@@ -2623,6 +2624,93 @@ void SetItemShown(ZHM5Item* p_Item, bool p_Shown, ZEntityRef p_Root = {}) {
 }
 }
 
+// The previous SetProperty("m_bVisible") can fail silently on scene
+// templates: ZSpatialEntity's actual renderer flags are native bitfields.
+// Set them directly while the partner holds the item, restoring the exact
+// original flags later. This is visual-only: item ownership and physics do
+// not change, and no extra world-inventory scan is introduced.
+void SdkWorld::SetPeerItemVisible(uint64_t id, ZHM5Item* item,
+                                   const ZEntityRef& ref, bool visible) {
+    if (!item) return;
+    ZSpatialEntity* parts[] = {
+        ref.QueryInterface<ZSpatialEntity>(),
+        item->m_rGeomentity.m_pInterfaceRef,
+        item->m_pGeomEntity.m_pInterfaceRef
+    };
+    if (!visible && !m_ItemVisualBackups.contains(id) &&
+        m_ItemVisualBackups.size() >= 512)
+        return; // Don't keep unbounded render overrides from a modified peer.
+
+    auto& backup = m_ItemVisualBackups[id];
+    // Snapshot MUST happen before reflection-driven SetProperty calls;
+    // otherwise the backup may capture the already-hidden state.
+    int nodes = 0;
+    for (size_t i=0; i<3; ++i) {
+        ZSpatialEntity* part=parts[i];
+        if (!part) continue;
+        bool duplicate=false;
+        for (size_t j=0;j<i;++j)
+            if (parts[j]==part) { duplicate=true; break; }
+        if (duplicate) continue;
+        ++nodes;
+        auto& saved=backup.parts[i];
+        if (!visible) {
+            // Never dereference a stored pointer; the world can respawn items.
+            if (saved.identity != part) {
+                saved.identity=part;
+                saved.visible=part->m_bVisible;
+                saved.parentHidden=part->m_bParentHidden;
+                saved.forceVisible=part->m_bForceVisible;
+            }
+            const auto hidden=coop::item_visibility::Hidden();
+            part->m_bVisible=hidden.visible;
+            part->m_bParentHidden=hidden.parentHidden;
+            part->m_bForceVisible=hidden.forceVisible;
+        } else if (saved.identity == part) {
+            // Preserve initial visibility: some items are hidden by scripts
+            // even when present in the inventory list.
+            part->m_bVisible=saved.visible;
+            part->m_bParentHidden=saved.parentHidden;
+            part->m_bForceVisible=saved.forceVisible;
+        }
+    }
+    if (!visible) {
+        SetItemShown(item, false, ref);
+        // Native fields take precedence if the reflected property was not
+        // implemented for this entity template. Write them again afterward.
+        for (ZSpatialEntity* part : parts) if (part) {
+            const auto hidden=coop::item_visibility::Hidden();
+            part->m_bVisible=hidden.visible;
+            part->m_bParentHidden=hidden.parentHidden;
+            part->m_bForceVisible=hidden.forceVisible;
+        }
+        // Diagnostic once per unique world item. If this says nodes=0, we
+        // must inspect the game's actual renderer entity relationship.
+        if (m_Trace && !m_LoggedItemVisuals.contains(id)) {
+            m_LoggedItemVisuals.insert(id);
+            m_Trace("item visibility: native hide id=" + std::to_string(id) +
+                " spatial nodes=" + std::to_string(nodes) +
+                " root=" + std::to_string(parts[0]!=nullptr) +
+                " geom1=" + std::to_string(parts[1]!=nullptr) +
+                " geom2=" + std::to_string(parts[2]!=nullptr));
+        }
+    } else {
+        // First restore the item-level scene switches, then its spatial flags.
+        // Direct spatial restore happens *after* the reflection-driven write.
+        SetItemShown(item, true, ref);
+        for (size_t i=0;i<3;++i) {
+            ZSpatialEntity* part=parts[i];
+            const auto& saved=backup.parts[i];
+            if (!part || saved.identity!=part) continue;
+            part->m_bVisible=saved.visible;
+            part->m_bParentHidden=saved.parentHidden;
+            part->m_bForceVisible=saved.forceVisible;
+        }
+        m_ItemVisualBackups.erase(id);
+        m_LoggedItemVisuals.erase(id);
+    }
+}
+
 ZHM5Item* SdkWorld::FindItem(uint64_t p_Id, ZEntityRef& p_Ref) const {
     ZHM5Item* s_Found = nullptr;
 
@@ -2672,7 +2760,7 @@ void SdkWorld::CollectItemChanges(std::vector<coop::ItemChange>& p_Out) {
     // Find held objects by O(1) index lookup, not another 2-pass inventory walk.
     for (const uint64_t s_Id : m_PeerHeldItems) {
         if (const auto s_It = s_Indexes.find(s_Id); s_It != s_Indexes.end())
-            SetItemShown(s_Items[s_It->second].item, false, s_Items[s_It->second].ref);
+            SetPeerItemVisible(s_Id, s_Items[s_It->second].item, s_Items[s_It->second].ref, false);
     }
     CollectDoorChanges(p_Out);
     CollectBodyChanges(p_Out);
@@ -2744,7 +2832,7 @@ void SdkWorld::ResetItems() {
             ZEntityRef s_Ref;
 
             if (ZHM5Item* s_Item = FindItem(s_Id, s_Ref))
-                SetItemShown(s_Item, true, s_Ref);
+                SetPeerItemVisible(s_Id, s_Item, s_Ref, true);
         }
     }
 
@@ -2886,7 +2974,7 @@ void SdkWorld::ApplyPeerItem(const coop::ItemChange& p_Change) {
 
     if (p_Change.Taken()) {
         m_PeerHeldItems.insert(p_Change.id);
-        SetItemShown(s_Item, false, s_Ref);
+        SetPeerItemVisible(p_Change.id, s_Item, s_Ref, false);
 
         if (m_Trace)
             m_Trace("item: " + std::to_string(p_Change.id) + " taken by the partner");
@@ -2895,7 +2983,7 @@ void SdkWorld::ApplyPeerItem(const coop::ItemChange& p_Change) {
     }
 
     if (m_PeerHeldItems.erase(p_Change.id)) {
-        SetItemShown(s_Item, true, s_Ref);
+        SetPeerItemVisible(p_Change.id, s_Item, s_Ref, true);
 
         if (m_Trace)
             m_Trace("item: " + std::to_string(p_Change.id) + " put back by the partner");

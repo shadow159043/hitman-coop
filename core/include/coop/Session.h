@@ -97,7 +97,7 @@ public:
 
 struct SessionConfig {
     std::string playerName = "Agent";
-    std::string modVersion = "0.12.16";
+    std::string modVersion = "0.12.17";
     std::string gameVersion = "unknown";
     std::string roomCode;    // Host's expected code; client's code to present at handshake.
     std::string roomPassword; // Optional host password / client entry (not saved to configuration).

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <deque>
 #include <functional>
 #include <utility>
@@ -461,6 +462,21 @@ private:
     };
     std::unordered_map<uint64_t, TrackedItem> m_Items;
     std::unordered_set<uint64_t> m_PeerHeldItems;
+    // Saves native spatial render flags (root + two geometry refs) while
+    // another player holds an item. No raw pointer is dereferenced later;
+    // each restore re-resolves the currently live item entity first.
+    struct ItemVisualBackup {
+        struct Part {
+            const void* identity = nullptr;
+            bool visible = true;
+            bool parentHidden = false;
+            bool forceVisible = false;
+        };
+        std::array<Part, 3> parts {};
+    };
+    std::unordered_map<uint64_t, ItemVisualBackup> m_ItemVisualBackups;
+    std::unordered_set<uint64_t> m_LoggedItemVisuals;
+    void SetPeerItemVisible(uint64_t p_Id, class ZHM5Item* p_Item, const ZEntityRef& p_Ref, bool p_Visible);
     // A peer can pick up an item before its entity spawns locally. Reapply it on later scans.
     std::unordered_map<uint64_t, coop::ItemChange> m_PendingPeerItems;
     // Visual-only local echoes for player-dropped items whose IDs do not exist on this PC.
