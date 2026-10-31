@@ -7,9 +7,32 @@
 #include "TestFramework.h"
 #include "coop/Connection.h"
 #include "coop/Interpolation.h"
+#include "coop/FriendlyFire.h"
 #include "coop/Protocol.h"
 
 using namespace coop;
+
+TEST(FriendlyFire_RejectsUntrustedHitsAndKeepsHealthFinite) {
+    CHECK(friendly_fire::ParseHits("1") == 1);
+    CHECK(friendly_fire::ParseHits("3") == 3);
+    CHECK(friendly_fire::ParseHits("0") == 0);
+    CHECK(friendly_fire::ParseHits("4") == 0);
+    CHECK(friendly_fire::ParseHits("12") == 0);
+    CHECK(friendly_fire::ParseHits("-1") == 0);
+    CHECK(friendly_fire::ParseHits("1;restart") == 0);
+    CHECK(friendly_fire::ParseHits("") == 0);
+    CHECK(std::abs(friendly_fire::HealthAfterHit(100.f, 100.f, 1) - 88.f) < 0.01f);
+    CHECK(std::abs(friendly_fire::HealthAfterHit(100.f, 100.f, 3) - 64.f) < 0.01f);
+    CHECK(friendly_fire::HealthAfterHit(10.f, 100.f, 2) == 1.f); // Never fake a death transition.
+    CHECK(friendly_fire::HealthAfterHit(100.f, 100.f, 0) == 100.f);
+    CHECK(friendly_fire::HealthAfterHit(100.f, 100.f, 9) == 100.f);
+    CHECK(friendly_fire::HealthAfterHit(100.f, 0.f, 1) == 100.f);
+    CHECK(friendly_fire::HealthAfterHit(100.f, 1e8f, 1) == 100.f);
+    CHECK(friendly_fire::HealthAfterHit(100.f, 100.f, -1) == 100.f);
+    CHECK(friendly_fire::HealthAfterHit(0.f, 100.f, 1) == 0.f);
+    CHECK(friendly_fire::HealthAfterHit(std::numeric_limits<float>::quiet_NaN(), 100.f, 1) !=
+        friendly_fire::HealthAfterHit(std::numeric_limits<float>::quiet_NaN(), 100.f, 1));
+}
 
 TEST(Bytes_RoundTrip) {
     ByteWriter w;

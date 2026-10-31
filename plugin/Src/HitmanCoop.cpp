@@ -1,6 +1,7 @@
 #include "HitmanCoop.h"
 #include "CoopText.h"
 #include "coop/PartnerPresence.h"
+#include "coop/FriendlyFire.h"
 #include "CrashTrace.h"
 #include "CrashGuards.h"
 #include "GamePause.h"
@@ -27,6 +28,7 @@
 #include <Glacier/SGameUpdateEvent.h>
 #include <Glacier/ZInput.h>
 #include <Glacier/ZActor.h>
+#include <Glacier/ZHitman5.h>
 #include <Glacier/ZApplicationEngineWin32.h>
 #include <Glacier/ZGameLoopManager.h>
 #include <Glacier/ZScene.h>
@@ -318,6 +320,7 @@ void HitmanCoop::LoadSettings() {
     m_HudOpacity = std::clamp(static_cast<float>(GetSettingDouble("general", "hud_opacity", 0.45)), 0.f, 1.f);
     m_ShowCompass = GetSettingBool("general", "show_compass", false);
     m_TargetAssist = GetSettingBool("general", "target_assist", false);
+    m_FriendlyFire = GetSettingBool("general", "friendly_fire", false);
     m_Streamer = GetSettingBool("general", "streamer_mode", false);
     m_AutoCopyCode = GetSettingBool("general", "copy_join_code", true);
     m_Feet = GetSettingBool("general", "feet", false);
@@ -400,6 +403,7 @@ void HitmanCoop::ApplySettings() {
     m_StreamerSetting = m_Streamer;
     m_MapNoPauseSetting = m_MapNoPause;
     m_TargetAssistSetting = m_TargetAssist;
+    m_FriendlyFireSetting = m_FriendlyFire;
     m_FeetSetting = m_Feet;
     m_SyncQualitySetting = m_SyncQuality;
     m_MaxMarksSetting = m_MaxMarks;
@@ -444,6 +448,7 @@ void HitmanCoop::SaveSettings() {
     SetSettingDouble("general", "hud_opacity", m_HudOpacity);
     SetSettingBool("general", "show_compass", m_ShowCompass);
     SetSettingBool("general", "target_assist", m_TargetAssist);
+    SetSettingBool("general", "friendly_fire", m_FriendlyFire);
     SetSettingBool("general", "streamer_mode", m_Streamer);
     SetSettingBool("general", "copy_join_code", m_AutoCopyCode);
     SetSettingBool("general", "feet", m_Feet);
@@ -633,6 +638,42 @@ void HitmanCoop::MarkAimed(double p_Now) {
     m_World.Notify("You marked " + s_Label + ". Mark again quickly to warn of danger.");
 }
 
+// Apply health on the actual local 47, never on the NPC representing the remote
+// player. This is only a non-lethal HP prototype; it does NOT impersonate an
+// engine-native player hit or attempt to invent an SHitInfo memory layout.
+bool HitmanCoop::ApplyFriendlyDamage(int p_Hits) {
+    if (!m_FriendlyFireSetting || !m_World.IsInScene() ||
+        m_LevelState != static_cast<int>(ZLevelManager::EGameState::EGS_Playing) ||
+        !m_Session || !m_Session->Synced() || p_Hits < 1 || p_Hits > 3)
+        return false;
+
+    const auto s_Player = SDK()->GetLocalPlayer();
+    if (!s_Player || !s_Player.m_pInterfaceRef || !s_Player.m_pInterfaceRef->m_pHealth ||
+        s_Player.m_pInterfaceRef->m_bIsInvincible)
+        return false;
+
+    const double s_Now = Now();
+    if (s_Now - m_FriendlyDamageWindowAt > 1.0) {
+        m_FriendlyDamageWindowAt = s_Now;
+        m_FriendlyDamageWindowHits = 0;
+    }
+    // Separate received-event cap in addition to the existing co-op MissionEvent
+    // flood limits; rejects a burst even from a modified peer.
+    const int s_Count = std::min(p_Hits, std::max(0, 6 - m_FriendlyDamageWindowHits));
+    if (!s_Count) return false;
+    auto* s_Health = s_Player.m_pInterfaceRef->m_pHealth;
+    const float s_Current = s_Health->m_fHitPoints.Get();
+    const float s_Max = s_Health->m_fMaxHitPoints.Get();
+    const float s_After = coop::friendly_fire::HealthAfterHit(s_Current, s_Max, s_Count);
+    if (s_After >= s_Current) return false;
+    m_FriendlyDamageWindowHits += s_Count;
+    s_Health->m_fHitPoints = s_After;
+    m_World.NotifyAs(SdkWorld::ToastKind::Warning,
+        "Friendly fire: " + (m_FrameStatus.peerName.empty() ? std::string("your partner") : m_FrameStatus.peerName) +
+        " hit you (" + std::to_string(s_Count) + (s_Count == 1 ? " hit)." : " hits)."));
+    return true;
+}
+
 // The partner's teamwork events (see the Coop_* names below); false for any other event.
 bool HitmanCoop::OnTeamEvent(const std::string& p_Name, const std::string& p_Json) {
     const double s_Now = Now();
@@ -684,8 +725,15 @@ bool HitmanCoop::OnTeamEvent(const std::string& p_Name, const std::string& p_Jso
         return true;
     }
 
+    if (p_Name == "Coop_FriendlyDamage") {
+        // Reliable co-op event, but contents are still untrusted: only accept
+        // one digit 1..3, only in a synced mission, with local opt-in and a cap.
+        ApplyFriendlyDamage(coop::friendly_fire::ParseHits(p_Json));
+        return true;
+    }
+
     if (p_Name == "Coop_FriendlyFire") {
-        m_World.NotifyAs(SdkWorld::ToastKind::Partner, s_Partner + " hit you by mistake (no harm done here).");
+        m_World.NotifyAs(SdkWorld::ToastKind::Partner, s_Partner + " hit your stand-in (no damage; friendly fire off).");
         return true;
     }
 
@@ -1305,11 +1353,32 @@ void HitmanCoop::OnFrameUpdate(const SGameUpdateEvent& p_UpdateEvent) {
     UpdateWaitForPartner(s_Now, m_FrameStatus);
     m_World.UpdateRestart(m_LevelState == static_cast<int>(ZLevelManager::EGameState::EGS_Playing));
 
-    // Shots that hit the partner's stand-in: both are told, once in a while.
-    if (const int s_Hits = m_FriendlyHits.exchange(0); s_Hits > 0 && s_Now - m_FriendlyToldAt > 6.0 && m_FrameStatus.synced) {
-        m_FriendlyToldAt = s_Now;
-        m_World.NotifyAs(SdkWorld::ToastKind::Warning, "You hit " + m_FrameStatus.peerName + "'s stand-in. No harm done: their own game decides what hits them.");
-        m_Session->SendMissionEvent("Coop_FriendlyFire", "");
+    // The hit detour only counts impacts on the protected remote stand-in.
+    // Transfer bounded HP damage only when THIS player explicitly opted in and
+    // is holding a firearm (the hit SDK callback lacks reliable source data).
+    if (m_FrameStatus.synced && m_FriendlyFireSetting && m_World.LocalHeldWeapon()) {
+        if (s_Now - m_LastFriendlyDamageSentAt >= 0.2) {
+            const int s_Hits = m_FriendlyHits.exchange(0);
+            if (s_Hits > 0) {
+                m_LastFriendlyDamageSentAt = s_Now;
+                const int s_Send = std::clamp(s_Hits, 1, 3);
+                m_Session->SendMissionEvent("Coop_FriendlyDamage", std::to_string(s_Send));
+                if (s_Now - m_FriendlyToldAt > 3.0) {
+                    m_FriendlyToldAt = s_Now;
+                    m_World.NotifyAs(SdkWorld::ToastKind::Warning,
+                        "Friendly fire: " + m_FrameStatus.peerName + "'s health may be reduced.");
+                }
+            }
+        }
+    }
+    else {
+        // Retain the original harmless-hit notification when disabled.
+        if (const int s_Hits = m_FriendlyHits.exchange(0); s_Hits > 0 && s_Now - m_FriendlyToldAt > 6.0 && m_FrameStatus.synced) {
+            m_FriendlyToldAt = s_Now;
+            m_World.NotifyAs(SdkWorld::ToastKind::Warning,
+                "You hit " + m_FrameStatus.peerName + "'s stand-in. Friendly fire is off.");
+            m_Session->SendMissionEvent("Coop_FriendlyFire", "");
+        }
     }
 
     // Time together, for the co-op record (saved every couple of minutes, and at each mission's end).

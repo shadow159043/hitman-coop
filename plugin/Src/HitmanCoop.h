@@ -97,6 +97,10 @@ private:
     // Shots that hit the partner's stand-in since the last frame (no harm: their game decides).
     std::atomic<int> m_FriendlyHits { 0 };
     double m_FriendlyToldAt = -100.0;
+    double m_LastFriendlyDamageSentAt = -100.0;
+    double m_FriendlyDamageWindowAt = -100.0;
+    int m_FriendlyDamageWindowHits = 0;
+    bool ApplyFriendlyDamage(int p_Hits);
 
     // Teamwork: ready checks, the 3-2-1 countdown, signals and "come to me" (as mission events).
     bool OnTeamEvent(const std::string& p_Name, const std::string& p_Json);
@@ -330,6 +334,7 @@ private:
     bool m_ShowRadar = true;
     bool m_ShowCompass = false;
     bool m_TargetAssist = false;
+    bool m_FriendlyFire = false; // Each player explicitly opts in, default OFF.
     bool m_Streamer = false;
     bool m_AutoCopyCode = true;
     bool m_Feet = false;
@@ -361,6 +366,7 @@ private:
     std::atomic<bool> m_StreamerSetting { false };
     std::atomic<bool> m_MapNoPauseSetting { false };
     std::atomic<bool> m_TargetAssistSetting { false };
+    std::atomic<bool> m_FriendlyFireSetting { false };
     std::atomic<bool> m_FeetSetting { false };
     std::atomic<int> m_SyncQualitySetting { 1 };
     std::atomic<int> m_MaxMarksSetting { 1 };

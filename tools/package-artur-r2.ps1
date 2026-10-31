@@ -11,7 +11,7 @@ $NetTest = Join-Path $Root "_build-sdk420\core\RelWithDebInfo\HitmanCoop-NetTest
 $NewDll = Join-Path $Root "_build-sdk420\plugin\RelWithDebInfo\HitmanCoop.dll"
 $Stage = Join-Path $OutDir "_artur-r2-stage"
 $Payload = Join-Path $OutDir "_artur-r2-payload.zip"
-$Setup = Join-Path $OutDir "HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.9-PERF-TEST.exe"
+$Setup = Join-Path $OutDir "HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.10-FRIENDLY-FIRE-TEST.exe"
 $Csc = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 $Fx = Split-Path $Csc
 foreach ($f in @((Join-Path $R2 "Retail\mods\HitmanCoop.dll"), (Join-Path $R2 "Retail\ZHMModSDK.dll"), $NetTest, $NewDll, $Csc)) {
@@ -27,7 +27,7 @@ Copy-Item $NetTest (Join-Path $Stage "Test-Connection.exe")
 Copy-Item (Join-Path $R2 "HITMAN-COOP-LICENSE.txt") (Join-Path $Stage "LICENSE.txt")
 Copy-Item (Join-Path $R2 "SDK-LICENSE.txt") (Join-Path $Stage "SDK-LICENSE.txt")
 Copy-Item (Join-Path $R2 "READ-ME-FIRST.txt") (Join-Path $Stage "READ-ME-FIRST.txt")
-$ReadmeIntro = "R2.9 PERFORMANCE TEST / v0.12.8 (protocol 16): reduces repeated full NPC actor enumeration to 30 Hz by default, throttles puppet reconciliation to the same scan rate, builds a single scene-item lookup index per scan, only formats item repository IDs when an item actually changes, and suppresses unchanged alert packets between 0.4-second refreshes. Simulated 60-FPS/120-NPC benchmark reduced each player NPC full enumerations to 80 in 3s (prior ~180). These are CPU-work reductions, NOT confirmed in-game FPS improvement. Preserves R2.8 Steam invite/diagnostics, R2.6 weapon visuals and confirmed R2.4 movement/NPC combat fixes. BOTH players need v0.12.8, HITMAN 3.290.1.x and ZHMModSDK 4.2.0. Steam P2P and some item/disguise/drag features still experimental. Passwords not encrypted. Original HITMAN Co-op by Jordan Rodrigues, GPL-3.0-or-later."
+$ReadmeIntro = "R2.10 FRIENDLY FIRE TEST / v0.12.9 (protocol 16): opt-in FRIENDLY FIRE under CO-OP Settings/Playing together, default OFF. BOTH players must turn it on. Weapon hits on the partner stand-in send a bounded reliable event that reduces the receiving player's local HP by approximately 12% of max HP per hit, capped at 1 HP pending native death-state research. Not a native bullet or melee damage simulation: exact shooter attribution, death animations and lethal damage are NOT implemented. Friendly fire effects are NOT live-verified. Preserves R2.9 CPU/network optimizations, Steam invites, combat and movement. Both players need v0.12.9, HITMAN 3.290.1.x and ZHMModSDK 4.2.0. Passwords are not encrypted. Original HITMAN Co-op by Jordan Rodrigues, GPL-3.0-or-later."
 $ReadmeOriginal = Get-Content (Join-Path $Stage "READ-ME-FIRST.txt") -Raw
 Set-Content (Join-Path $Stage "READ-ME-FIRST.txt") -Value ($ReadmeIntro + [Environment]::NewLine + $ReadmeOriginal) -Encoding UTF8
 Copy-Item (Join-Path $R2 "NATIVE-AUDIT.md") (Join-Path $Stage "NATIVE-AUDIT.md")
@@ -56,7 +56,7 @@ if ($Installer -notmatch 'requires HITMAN 3.290.1' -or $Installer -notmatch 'Ass
 }
 Set-Content -Path (Join-Path $Stage "installer.ps1") -Value $Installer -Encoding UTF8
 
-$R21 = Join-Path $OutDir "HitmanCoop-0.12.8-3290-sdk420-EXPERIMENTAL-R2.9-PERF-TEST"
+$R21 = Join-Path $OutDir "HitmanCoop-0.12.9-3290-sdk420-EXPERIMENTAL-R2.10-FRIENDLY-FIRE-TEST"
 $Zip21 = "$R21.zip"
 Remove-Item $R21,$Zip21 -Recurse -Force -ErrorAction SilentlyContinue
 Copy-Item -Path $R2 -Destination $R21 -Recurse
@@ -67,7 +67,7 @@ Set-Content (Join-Path $R21 "SHA256SUMS.txt") -Value $checks -Encoding ascii
 Compress-Archive -Path $R21 -DestinationPath $Zip21 -CompressionLevel Optimal -Force
 $ZipHash = (Get-FileHash -Algorithm SHA256 $Zip21).Hash.ToLowerInvariant()
 Set-Content "$Zip21.sha256" "$ZipHash  $(Split-Path -Leaf $Zip21)"
-Write-Host "R2.9 PERF TEST ZIP: $Zip21"
+Write-Host "R2.10 FRIENDLY FIRE TEST ZIP: $Zip21"
 Compress-Archive -Path (Join-Path $Stage "*") -DestinationPath $Payload -CompressionLevel Optimal -Force
 $Icon = Join-Path $Root "installer\setup\setup.ico"
 $Manifest = Join-Path $Root "installer\setup\setup.manifest"
@@ -78,5 +78,5 @@ $Hash = (Get-FileHash -Algorithm SHA256 $Setup).Hash.ToLowerInvariant()
 Set-Content -Path "$Setup.sha256" -Value "$Hash  $(Split-Path $Setup -Leaf)"
 Write-Host "OUTPUT: $Setup"
 Write-Host "SHA256: $Hash"
-Write-Host "NOTE: R2.9 PERF TEST: NPC/item/alert optimizations (experimental); both players need v0.12.8/protocol 16 and game 3.290.1.x."
+Write-Host "NOTE: R2.10 FRIENDLY FIRE TEST: nonlethal HP damage prototype, default OFF; both players need v0.12.9/protocol 16 and game 3.290.1.x."
 Remove-Item $Stage,$Payload -Recurse -Force

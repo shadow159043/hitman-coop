@@ -1347,6 +1347,20 @@ TEST(Session_MissionEventsReachPeer) {
     CHECK(d.clientWorld.peerEvents.back() == "ContractEnd:{\"Value\":{}}");
 }
 
+TEST(Session_ExperimentalFriendlyDamageEventRelaysOnReliableChannel) {
+    Duo d(101);
+    d.HostLoads(c_Miami, 3);
+    d.ClientLoads(c_Miami, 3, 0.f);
+    d.Start();
+    REQUIRE(d.StepUntilSynced(4.0));
+    d.host.SendMissionEvent("Coop_FriendlyDamage", "2");
+    d.Step(0.5);
+    REQUIRE(!d.clientWorld.peerEvents.empty());
+    CHECK(d.clientWorld.peerEvents.back() == "Coop_FriendlyDamage:2");
+    // The core passes the event through; opt-in, source attribution and HP
+    // application are validated by the plugin in a live two-player HITMAN game.
+}
+
 TEST(Session_ItemChangesReachPeer) {
     Duo d(30);
     d.HostLoads(c_Miami, 0);
