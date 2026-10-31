@@ -269,7 +269,7 @@ namespace HitmanCoopSetup
         void Prepare()
         {
             SetBusy(true);
-            SetResult("Looking for HITMAN…", Theme.Dim);
+            SetResult("Searching Steam and Epic for HITMAN…", Theme.Dim);
 
             var worker = new System.ComponentModel.BackgroundWorker();
             string[] found = new string[0];
@@ -316,7 +316,7 @@ namespace HitmanCoopSetup
                 else if (m_Games.Items.Count > 0) m_Games.SelectedIndex = 0;
 
                 if (m_Games.Items.Count > 0)
-                    SetResult("Found HITMAN. Click INSTALL. (Close the game first.)", Theme.Text);
+                    SetResult("Found HITMAN automatically. Click INSTALL. (Close the game first.)", Theme.Text);
                 else
                     SetResult("Couldn't find HITMAN automatically. Click Browse and pick the game folder (the one with Retail inside).", Theme.Gold);
             };

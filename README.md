@@ -2,23 +2,24 @@
 
 ## Download a version
 
-**Latest Artur Edition: [Experimental R2.1 - installer and ZIP](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.1-20261030)**
+**Latest Artur Edition: [Experimental R2.2 - auto-detecting installer](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.2-20261030)**
 
 | Version | Status | What's different | Download |
 | --- | --- | --- | --- |
-| **Artur R2.1** | **Latest (experimental)** | "by Artur" in-game menu and launcher; installer correctly allows a *disabled* Assassin Rivals 2 mod | [R2.1 installer / ZIP](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.1-20261030) |
+| **Artur R2.2** | **Latest (experimental)** | Auto-detects HITMAN across Steam libraries and Epic/Heroic install records; retains Artur in-game branding and R2.1 fixes | [R2.2 installer / ZIP](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.2-20261030) |
+| **Artur R2.1** | Previous | "by Artur" in-game menu and launcher; disabled Assassin Rivals 2 allowed | [R2.1 installer / ZIP](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.1-20261030) |
 | **Artur R2** | Previous (two-PC tested in Freeform Training) | Updated SDK 4.2.0 and visible/animated remote-player fixes | [R2 release](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2-20261030) |
 | **Initial experimental build (pre-R2)** | Older / not recommended | Original experimental ZIP, retained within the R2 release's assets | [Older experimental ZIP](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2-20261030) |
 
-**[Browse all releases and previous versions](https://github.com/shadow159043/hitman-coop/releases)** · [R2.1 source tag](https://github.com/shadow159043/hitman-coop/tree/artur-r2.1-20261030) · [All source tags](https://github.com/shadow159043/hitman-coop/tags)
+**[Browse all releases and previous versions](https://github.com/shadow159043/hitman-coop/releases)** · [R2.2 source tag](https://github.com/shadow159043/hitman-coop/tree/artur-r2.2-20261030) · [All source tags](https://github.com/shadow159043/hitman-coop/tags)
 
-> **Choose R2.1 for the newest changes.** Download `HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.1.exe` for the Windows installer, or the matching `R2.1.zip` for manual setup. Both players need matching mod/SDK builds and HITMAN game version **3.290.1.0**. R2.1 passed 83 automated tests, but its updated in-game UI/installer have not yet been tested in-game; R2 was tested on two PCs in Freeform Training.
+> **Choose R2.2 for the newest installer.** Download `HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.2.exe`, which searches Steam and Epic library records and auto-selects a compatible game folder; Browse remains available. Both players need matching mod/SDK builds and HITMAN game version **3.290.1.0**. R2.2 retains the R2.1 multiplayer plugin, which passed 83 core tests; R2 was previously tested on two PCs in Freeform Training. The new R2.2 installer has passed offline discovery/payload checks, but not a new live gameplay test.
 >
 > This repository is **private**. Release links only work for accounts granted repository access. For ordinary installation, do **not** download the large complete-project recovery backup.
 
 ---
 
-> **Artur compatibility edition (experimental R2.1).** This fork updates the original HITMAN Co-op
+> **Artur compatibility edition (experimental R2.2).** This fork updates the original HITMAN Co-op
 > for HITMAN 3.290.1.0 / ZHMModSDK 4.2.0. The co-op developer and original author is
 > **Jordan Rodrigues**. Artur is credited for this edition, not as creator of the original game mod.
 > See [two-PC validation](docs/two-pc-test-20261030.md) and [credits](CREDITS.md).
@@ -115,7 +116,7 @@ countdown for the perfect double hit.
 - Both players need the **same version of HITMAN Co-op**.
 - You play together at a location **you both own** (a friend with only some locations can play
   those with you). The mod never takes anyone to a location they didn't start themselves.
-- **Artur R2.1 targets HITMAN 3.290.1.0 and ZHMModSDK 4.2.0.** The original upstream release
+- **Artur R2.2 targets HITMAN 3.290.1.0 and ZHMModSDK 4.2.0.** The original upstream release
   was tested on game version 3.280.0. Other game versions have not been verified for this fork.
 
 ## Install
@@ -123,7 +124,7 @@ countdown for the perfect double hit.
 > ### **Both players do this. It takes about a minute.**
 >
 > 1. **Close the game.**
-> 2. **Go to the [R2.1 release](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.1-20261030) and download `HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.1.exe`.**
+> 2. **Go to the [R2.2 release](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.2-20261030) and download `HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.2.exe`.**
 >    (You don't need the source code or the complete-project archive.)
 > 3. **Run it and click INSTALL.** It finds HITMAN on Steam or Epic by itself and installs the mod
 >    loader ([ZHMModSDK](https://github.com/OrfeasZ/ZHMModSDK)) and HITMAN Co-op into the game.
@@ -133,7 +134,7 @@ countdown for the perfect double hit.
 - **Windows SmartScreen** may say "Windows protected your PC", because the setup isn't signed by a
   company. Click **More info**, then **Run anyway**. The setup's SHA-256 checksum is published next
   to it on the Releases page.
-- **Prefer a ZIP?** The R2.1 ZIP is a **manual distribution**, not a one-click installer. Read
+- **Prefer a ZIP?** The R2.2 ZIP is a **manual distribution**, not a one-click installer. Read
   `READ-ME-FIRST.txt`, back up your existing Retail/SDK files and only use the manual install if
   you know how to restore them. It does **not** include `Install.bat` or `Uninstall.bat`.
 - **To remove the mod**, run the setup again and click **UNINSTALL**.

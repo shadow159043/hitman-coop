@@ -1,4 +1,4 @@
-# Artur compatibility edition — HITMAN Co-op 0.12.1 R2.1
+# Artur compatibility edition — HITMAN Co-op 0.12.1 R2.2
 
 This is an experimental fork of [HITMAN Co-op by Jordan Rodrigues](https://github.com/JordanRodrigues021/hitman-coop), distributed under the original GPL-3.0-or-later license. The launcher and in-game CO-OP window/header/About tab now show **by Artur**. The original author remains credited in the About tab and license; this does not replace the original creator's copyright or project history.
 
@@ -10,10 +10,10 @@ This is an experimental fork of [HITMAN Co-op by Jordan Rodrigues](https://githu
 ## Artur-branded installer
 Build with `powershell -ExecutionPolicy Bypass -File tools/package-artur-r2.ps1` on the Windows build machine after the experimental R2 stage and matching NetTest utility have been built.
 
-Result: `_dist/HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.1.exe` and `_dist/HitmanCoop-0.12.1-3290-sdk420-EXPERIMENTAL-R2.1.zip`.
+Result: `_dist/HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.2.exe` and `_dist/HitmanCoop-0.12.1-3290-sdk420-EXPERIMENTAL-R2.2.zip`. The installer automatically checks Steam's registered path, standard Steam roots and extra libraries, the 1659040 appmanifest, Epic .item manifests and LauncherInstalled.dat, and Legendary/Heroic. Browse remains available for other/custom installations.
 The embedded installer checks the expected game version and reads `Retail/mods.ini`: an installed but **disabled** Assassin Rivals 2 DLL is permitted, but an **enabled** `[AssassinRivals2]` entry blocks installation to avoid simultaneous multiplayer plugins. Installer testing covers compilation, embedded payload checks, synthetic enabled/disabled cases and 83 core tests; **not** a new in-game install or full gameplay regression.
 
-The original mod loader and both PCs' HITMAN installations were restored after the successful live R2 test. The new R2.1 installer has **not** been run against either game installation; in-game UI visuals remain to be confirmed. The previously verified live R2 build remains independently preserved.
+The original mod loader and both PCs' HITMAN installations were restored after the successful live R2 test. The R2.2 installer was tested via extracted payload and isolated synthetic library folders; it has **not** been run in install mode against either game installation. In-game UI visuals remain to be confirmed. The previously verified live R2 build remains independently preserved.
 
 ## Backup and GitHub
 The Git repository retains the upstream history and all commits for the R2 bugfix and tests. Generated build directories (`_build*`), downloaded dependencies (`_deps*`), R2 distribution binaries (`_dist`), and raw test material (`_localtest`) are deliberately ignored by Git.

@@ -76,34 +76,63 @@ function Test-GameDir([string]$Dir) {
 }
 
 function Find-SteamGames {
+    param([string[]]$SteamRoots)
     $Found = @()
-    $SteamPath = $null
-
-    try { $SteamPath = (Get-ItemProperty -Path "HKCU:\Software\Valve\Steam" -Name SteamPath -ErrorAction Stop).SteamPath } catch {}
-    if (-not $SteamPath) {
-        try { $SteamPath = (Get-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\Valve\Steam" -Name InstallPath -ErrorAction Stop).InstallPath } catch {}
-    }
-
-    if (-not $SteamPath) { return $Found }
-
-    # Library paths from the vdf first: they keep the folder's real capitalisation.
-    $Libraries = @()
-    $Vdf = Join-Path $SteamPath "steamapps\libraryfolders.vdf"
-
-    if (Test-Path $Vdf) {
-        foreach ($Match in [regex]::Matches((Get-Content $Vdf -Raw), '"path"\s+"([^"]+)"')) {
-            $Libraries += $Match.Groups[1].Value -replace '\\\\', '\'
+    $Roots = @()
+    if ($PSBoundParameters.ContainsKey("SteamRoots")) {
+        $Roots += $SteamRoots
+    } else {
+        foreach ($Entry in @(
+            @{ Key = "HKCU:\Software\Valve\Steam"; Value = "SteamPath" },
+            @{ Key = "HKLM:\SOFTWARE\WOW6432Node\Valve\Steam"; Value = "InstallPath" },
+            @{ Key = "HKLM:\SOFTWARE\Valve\Steam"; Value = "InstallPath" }
+        )) {
+            try {
+                $Candidate = (Get-ItemProperty -Path $Entry.Key -Name $Entry.Value -ErrorAction Stop).($Entry.Value)
+                if ($Candidate) { $Roots += $Candidate }
+            } catch {}
+        }
+        $X86 = [Environment]::GetFolderPath("ProgramFilesX86")
+        if ($X86) { $Roots += (Join-Path $X86 "Steam") }
+        if ($env:ProgramFiles) { $Roots += (Join-Path $env:ProgramFiles "Steam") }
+        # Probe standard library roots, not an exhaustive disk crawl.
+        foreach ($Drive in [IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady }) {
+            foreach ($Folder in @("Steam", "SteamLibrary", "Games\Steam", "Games\SteamLibrary")) {
+                $Roots += (Join-Path $Drive.RootDirectory.FullName $Folder)
+            }
         }
     }
-
-    $Libraries += $SteamPath
-
-    foreach ($Library in $Libraries) {
-        $Dir = Join-Path $Library "steamapps\common\HITMAN 3"
-        if (Test-GameDir $Dir) { $Found += (Resolve-Path $Dir).Path }
+    foreach ($SteamRoot in @(Get-UniquePaths $Roots)) {
+        if (-not (Test-Path -LiteralPath $SteamRoot -PathType Container)) { continue }
+        $Libraries = @($SteamRoot)
+        $Vdf = Join-Path $SteamRoot "steamapps\libraryfolders.vdf"
+        if (Test-Path -LiteralPath $Vdf -PathType Leaf) {
+            try {
+                foreach ($Match in [regex]::Matches((Get-Content -LiteralPath $Vdf -Raw), '"path"\s+"([^"]+)"')) {
+                    $Libraries += $Match.Groups[1].Value.Replace('\\', '\')
+                }
+            } catch {}
+        }
+        foreach ($Library in @(Get-UniquePaths $Libraries)) {
+            if (-not (Test-Path -LiteralPath $Library -PathType Container)) { continue }
+            $Common = Join-Path $Library "steamapps\common"
+            $Names = @("HITMAN 3", "HITMAN World of Assassination")
+            # Steam AppID 1659040 records the actual install folder name.
+            $Manifest = Join-Path $Library "steamapps\appmanifest_1659040.acf"
+            if (Test-Path -LiteralPath $Manifest -PathType Leaf) {
+                try {
+                    $Text = Get-Content -LiteralPath $Manifest -Raw
+                    $Match = [regex]::Match($Text, '"installdir"\s+"([^"]+)"')
+                    if ($Match.Success) { $Names += $Match.Groups[1].Value }
+                } catch {}
+            }
+            foreach ($Name in ($Names | Select-Object -Unique)) {
+                $Candidate = Join-Path $Common $Name
+                if (Test-GameDir $Candidate) { $Found += (Resolve-Path -LiteralPath $Candidate).Path }
+            }
+        }
     }
-
-    return $Found
+    return @(Get-UniquePaths $Found)
 }
 
 # Steam stores its own path in lower case, so the same folder can turn up twice.
@@ -121,22 +150,40 @@ function Get-UniquePaths([string[]]$Paths) {
 }
 
 function Find-EpicGames {
+    param([string]$ManifestsDirectory, [string]$LauncherInstalledFile)
+    if (-not $PSBoundParameters.ContainsKey("ManifestsDirectory")) {
+        $ManifestsDirectory = Join-Path $env:ProgramData "Epic\EpicGamesLauncher\Data\Manifests"
+    }
+    if (-not $PSBoundParameters.ContainsKey("LauncherInstalledFile")) {
+        $LauncherInstalledFile = Join-Path $env:ProgramData "Epic\UnrealEngineLauncher\LauncherInstalled.dat"
+    }
     $Found = @()
-    $Manifests = "$env:ProgramData\Epic\EpicGamesLauncher\Data\Manifests"
-
-    if (-not (Test-Path $Manifests)) { return $Found }
-
-    foreach ($Item in Get-ChildItem $Manifests -Filter *.item) {
+    if (Test-Path -LiteralPath $ManifestsDirectory -PathType Container) {
+        foreach ($Item in Get-ChildItem -LiteralPath $ManifestsDirectory -Filter *.item -File -ErrorAction SilentlyContinue) {
+            try {
+                $Json = Get-Content -LiteralPath $Item.FullName -Raw | ConvertFrom-Json
+                if ($Json.InstallLocation -and (Test-GameDir $Json.InstallLocation) -and
+                    (($Json.DisplayName -like "HITMAN*") -or ($Json.AppName -like "HITMAN*") -or
+                    (Test-Path -LiteralPath (Join-Path $Json.InstallLocation ".egstore")))) {
+                    $Found += (Resolve-Path -LiteralPath $Json.InstallLocation).Path
+                }
+            } catch {}
+        }
+    }
+    # Epic's LauncherInstalled.dat can list installs when .item manifests are absent.
+    if (Test-Path -LiteralPath $LauncherInstalledFile -PathType Leaf) {
         try {
-            $Json = Get-Content $Item.FullName -Raw | ConvertFrom-Json
-
-            if ($Json.DisplayName -like "HITMAN*" -and (Test-GameDir $Json.InstallLocation)) {
-                $Found += $Json.InstallLocation
+            $Database = Get-Content -LiteralPath $LauncherInstalledFile -Raw | ConvertFrom-Json
+            foreach ($App in @($Database.InstallationList)) {
+                if ($App.InstallLocation -and (Test-GameDir $App.InstallLocation) -and
+                    (($App.AppName -like "HITMAN*") -or ($App.DisplayName -like "HITMAN*") -or
+                    (Test-Path -LiteralPath (Join-Path $App.InstallLocation ".egstore")))) {
+                    $Found += (Resolve-Path -LiteralPath $App.InstallLocation).Path
+                }
             }
         } catch {}
     }
-
-    return $Found
+    return @(Get-UniquePaths $Found)
 }
 
 # Epic installs made with Legendary or Heroic instead of the Epic launcher.
