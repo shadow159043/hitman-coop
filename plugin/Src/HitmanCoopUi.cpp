@@ -980,7 +980,7 @@ void HitmanCoop::DrawPlayTab(const coop::SessionStatus& p_Status, bool p_InMissi
         }
         SectionTitle("Fistfight challenge (experimental)");
         if (s_Duel.phase == DuelState::Phase::ReceivedChallenge) {
-            ImGui::TextWrapped("%s challenges you to a fair keypress duel! 12 timed arrow prompts. Higher score wins; the loser is stunned for 3 seconds.", p_Status.peerName.c_str());
+            ImGui::TextWrapped("%s challenges you to a head-to-head fistfight! 12 timed LETTER prompts; first correct key gets a punch. Most punches wins; loser stunned for 3 seconds.", p_Status.peerName.c_str());
             ImGui::BeginDisabled(!s_CloseEnough || !p_Status.synced);
             if (ImGui::Button("Accept fistfight")) PushCommand({ Command::Kind::DuelAccept });
             ImGui::EndDisabled();
@@ -994,7 +994,7 @@ void HitmanCoop::DrawPlayTab(const coop::SessionStatus& p_Status, bool p_InMissi
         } else {
             ImGui::TextDisabled("Fistfight request/round underway. Close the CO-OP menu before the countdown.");
         }
-        ImGui::TextDisabled("Both use UP / RIGHT / DOWN / LEFT arrows. No damage, no kills; controls briefly locked for loser.");
+        ImGui::TextDisabled("Keys E / F / Q / R. One punch per winning round (~4.5%% max HP), nonlethal. Native NPC KO is blocked.");
         // Teamwork, in a grid of buttons (each also has a hotkey).
         SectionTitle(ICON_MD_GROUPS " Teamwork");
         const auto Key = [](Hotkeys::Action p_Action) {
@@ -1345,6 +1345,8 @@ void HitmanCoop::DrawSettingsTab() {
         ImGui::EndDisabled();
         s_Changed |= ImGui::Checkbox("Start together (hold my mission until my partner has loaded in, up to 90 s)", &m_WaitForPartner);
         s_Changed |= ImGui::Checkbox("Reconnect by myself when the connection drops", &m_AutoReconnect);
+        s_Changed |= ImGui::Checkbox("Duel animations (EXPERIMENTAL stand-in sparring poses)", &m_DuelAnimations);
+        HelpMarker("OFF by default. During a fistfight, your partner stand-in jabs when they win an exchange, recoils when you win, and bends on defeat. It adds bounded rotations through the existing pose hook (no native NPC takedown or physics). If arms twist or models deform, turn this OFF immediately.");
         s_Changed |= ImGui::Checkbox("Friendly fire (experimental: player-to-player damage)", &m_FriendlyFire);
         HelpMarker("Off by default. BOTH players must enable to send/receive damage. Each hit on a partner stand-in transfers 12% of max health, stopping at 1 HP. HITMAN's hit hook cannot yet distinguish NPC shots reliably: stray hits may also transfer. No native death animations or lethal damage yet.");
         if (m_FriendlyFire)

@@ -9,9 +9,44 @@
 #include "coop/Interpolation.h"
 #include "coop/FriendlyFire.h"
 #include "coop/Duel.h"
+#include "coop/DuelMotion.h"
 #include "coop/Protocol.h"
 
 using namespace coop;
+
+TEST(Duel_ReactionSpeedAdjudicationIsHostIndependent) {
+    CHECK(duel::Judge(140, 230) == 1);
+    CHECK(duel::Judge(230, 140) == 2);
+    CHECK(duel::Judge(140, 160) == 0); // 35ms jitter tie window.
+    CHECK(duel::Judge(70, -1) == 1);
+    CHECK(duel::Judge(-1, 70) == 2);
+    CHECK(duel::Judge(-1, -1) == 0);
+    CHECK(duel::Judge(-2, 100) == -2);
+    CHECK(duel::Judge(duel::kRoundMs, 100) == -2);
+    CHECK(duel::Judge(100, duel::kRoundMs) == -2);
+    // Missing-key and late/invalid packets never award points.
+}
+
+TEST(Duel_AnimatedPunchIsBoundedAndNonlethal) {
+    CHECK(duel_motion::HealthAfterPunch(100.f,100.f) > 95.f);
+    CHECK(duel_motion::HealthAfterPunch(100.f,100.f) < 96.f);
+    CHECK(duel_motion::HealthAfterPunch(3.f,100.f) == 1.f);
+    CHECK(duel_motion::HealthAfterPunch(1.f,100.f) == 1.f);
+    CHECK(duel_motion::HealthAfterPunch(100.f,0.f) == 100.f);
+    CHECK(duel_motion::HealthAfterPunch(100.f,100.f,13) == 100.f);
+    const auto cue = duel_motion::Sample(10.15,10.0, -100., -100., false, true);
+    CHECK(cue.jab > .3f);
+    CHECK(cue.recoil == 0.f);
+    const auto rec = duel_motion::Sample(10.15,-100., 10.0, -100., false, true);
+    CHECK(rec.recoil > .3f);
+    const auto down = duel_motion::Sample(20.8,-100.,-100.,20.0,true,false);
+    CHECK(down.down > .9f);
+    const auto after = duel_motion::Sample(25.,-100.,-100.,20.0,true,false);
+    CHECK(!after.Active());
+    float q[4] = {0,0,0,1};
+    duel_motion::Twist(q,1,.6f);
+    CHECK(std::abs(q[0]*q[0]+q[1]*q[1]+q[2]*q[2]+q[3]*q[3]-1.f) < .0001f);
+}
 
 TEST(Duel_BothPlayersReceiveIdenticalPromptsAndAtMostOnePointPerRound) {
     const uint32_t seed = 0x12345678u;

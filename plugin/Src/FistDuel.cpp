@@ -3,13 +3,17 @@
 #include "GamePause.h"
 
 #include <Windows.h>
+#include <Glacier/ZHitman5.h>
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <string>
 
-// The face-to-face duel is a deterministic co-op QTE, not an unsafe attempt to
-// activate 47's unknown NPC takedown engine. The winner briefly downs the
-// loser's controls without HP loss, death or mission-score consequences.
+// Head-to-head competitive QTE. Each client times its own keypress from its
+// local displayed prompt; the host compares bounded reaction times and
+// broadcasts ONE winner per round. Packet arrival order never awards points.
+// All HP changes are on the victim's OWN 47, never a remote actor or the
+// stand-in NPC. No native NPC knock-out or death state is ever invoked.
 bool HitmanCoop::CanStartDuel() const {
     if (!m_Session || !m_Session->Synced() || !m_World.IsInScene() ||
         m_LevelState != static_cast<int>(ZLevelManager::EGameState::EGS_Playing))
@@ -20,163 +24,251 @@ bool HitmanCoop::CanStartDuel() const {
         coop::Distance(a.pos, b) <= coop::duel::kChallengeRange;
 }
 
-void HitmanCoop::BeginDuelResult(uint32_t p_HostScore, uint32_t p_ClientScore, double p_Now) {
-    const int w = coop::duel::Winner(static_cast<int>(p_HostScore), static_cast<int>(p_ClientScore));
+void HitmanCoop::ApplyDuelPunch() {
+    if (!m_Session || !m_Session->Synced() || !m_World.IsInScene() ||
+        m_LevelState != static_cast<int>(ZLevelManager::EGameState::EGS_Playing))
+        return;
+    auto p = SDK()->GetLocalPlayer();
+    if (!p || !p.m_pInterfaceRef || !p.m_pInterfaceRef->m_pHealth ||
+        p.m_pInterfaceRef->m_bIsInvincible) return;
+    auto* hp = p.m_pInterfaceRef->m_pHealth;
+    const float current = hp->m_fHitPoints.Get();
+    const float maxHp = hp->m_fMaxHitPoints.Get();
+    const float after = coop::duel_motion::HealthAfterPunch(current, maxHp);
+    if (after < current)
+        hp->m_fHitPoints = after;
+}
+
+void HitmanCoop::ApplyDuelRound(int round, int winner, double now) {
+    if (round < 0 || round >= coop::duel::kRounds || winner < 0 || winner > 2 ||
+        !m_Session || !m_Session->Synced() || m_Duel.outcomes[round] != 0 ||
+        round != m_Duel.nextJudgement)
+        return;
+    // outcomes: 3 denotes a scored draw, 1/2 denote host/client victory.
+    m_Duel.outcomes[round] = winner == 0 ? 3 : winner;
+    ++m_Duel.nextJudgement;
+    const bool host = m_Session->Status().role == coop::SessionRole::Host;
+    const bool localWon = winner != 0 && (host ? winner == 1 : winner == 2);
+    const bool localLost = winner != 0 && !localWon;
+    if (localWon) {
+        ++m_Duel.rhythm.score;
+        m_Duel.lastRemoteRecoilAt = now;
+    } else if (localLost) {
+        ++m_Duel.remoteScore; // Initialized to zero on accepted fight.
+        m_Duel.lastRemoteHitAt = now;
+        ApplyDuelPunch();
+    }
+    m_Duel.lastExchangeAt = now;
+    m_Duel.lastExchange = localWon ? 1 : localLost ? -1 : 0;
+}
+
+void HitmanCoop::BeginDuelResult(uint32_t hostScore, uint32_t clientScore, double now) {
+    const int w = coop::duel::Winner(static_cast<int>(hostScore), static_cast<int>(clientScore));
     if (w < 0) return;
     const bool host = m_Session && m_Session->Status().role == coop::SessionRole::Host;
     m_Duel.phase = DuelState::Phase::Result;
-    m_Duel.resultAt = p_Now;
+    m_Duel.resultAt = now;
     m_Duel.verdict = w == 0 ? 0 : ((w == 1) == host ? 1 : -1);
-    m_Duel.remoteScore = host ? static_cast<int>(p_ClientScore) : static_cast<int>(p_HostScore);
-    m_LastDuelAt = p_Now;
+    m_Duel.remoteScore = host ? static_cast<int>(clientScore) : static_cast<int>(hostScore);
+    m_LastDuelAt = now;
     if (m_Duel.verdict < 0)
-        m_DuelDownUntil = p_Now + 3.0; // Non-lethal knockdown/stun; never mutate player HP.
+        m_DuelDownUntil = now + 3.0;
     const std::string peer = m_FrameStatus.peerName.empty() ? "your partner" : m_FrameStatus.peerName;
     m_World.NotifyAs(m_Duel.verdict < 0 ? SdkWorld::ToastKind::Warning : SdkWorld::ToastKind::Partner,
         m_Duel.verdict > 0 ? "Fistfight won! You knocked down " + peer + "." :
         m_Duel.verdict < 0 ? "Fistfight lost. " + peer + " knocked you down for 3 seconds." :
-        "Fistfight draw! Both players landed the same number of QTEs.");
-    AppendLog("duel: result local=" + std::to_string(m_Duel.rhythm.score) +
-        " other=" + std::to_string(m_Duel.remoteScore) +
+        "Fistfight draw! Both fighters landed the same number of punches.");
+    AppendLog("duel: punches landed=" + std::to_string(m_Duel.rhythm.score) +
+        " opponent=" + std::to_string(m_Duel.remoteScore) +
         " verdict=" + std::to_string(m_Duel.verdict));
 }
 
-bool HitmanCoop::OnDuelEvent(const std::string& p_Name, const std::string& p_Data, double p_Now) {
-    if (p_Name.rfind("Coop_Duel", 0) != 0)
-        return false;
+bool HitmanCoop::OnDuelEvent(const std::string& name, const std::string& data, double now) {
+    if (name.rfind("Coop_Duel", 0) != 0) return false;
     if (!m_Session || !m_Session->Synced()) return true;
-    uint32_t id = 0, x = 0, y = 0;
-    const auto host = m_Session->Status().role == coop::SessionRole::Host;
+    uint32_t id=0, x=0, y=0;
+    const bool host = m_Session->Status().role == coop::SessionRole::Host;
+    using Phase = DuelState::Phase;
     const auto active = m_Duel.phase;
 
-    if (p_Name == "Coop_DuelChallenge") {
-        if (!coop::duel::Number(p_Data, id) || !id) return true;
-        if ((active != DuelState::Phase::Idle && active != DuelState::Phase::Result) ||
-            p_Now - m_LastDuelAt < 8.0 || !CanStartDuel()) {
+    if (name == "Coop_DuelChallenge") {
+        if (!coop::duel::Number(data, id) || !id) return true;
+        if ((active != Phase::Idle && active != Phase::Result) ||
+            now-m_LastDuelAt < 8.0 || !CanStartDuel()) {
             m_Session->SendMissionEvent("Coop_DuelDecline", std::to_string(id));
             return true;
         }
         m_Duel = {};
-        m_Duel.phase = DuelState::Phase::ReceivedChallenge;
+        m_Duel.phase = Phase::ReceivedChallenge;
         m_Duel.id = id;
-        m_Duel.created = p_Now;
+        m_Duel.created = now;
         m_World.NotifyAs(SdkWorld::ToastKind::Partner,
             m_FrameStatus.peerName + " challenged you to a fistfight! Open CO-OP > Play to accept.");
         return true;
     }
-
-    if (p_Name == "Coop_DuelDecline") {
-        if (coop::duel::Number(p_Data, id) && id == m_Duel.id &&
-            active == DuelState::Phase::SentChallenge) {
-            m_Duel = {};
-            m_LastDuelAt = p_Now;
-            m_World.Notify("Your fistfight challenge was declined or the other player was too far away.");
+    if (name == "Coop_DuelDecline") {
+        if (coop::duel::Number(data, id) && id == m_Duel.id && active == Phase::SentChallenge) {
+            m_Duel = {}; m_LastDuelAt = now;
+            m_World.Notify("Your fistfight challenge was declined or your partner was too far away.");
         }
         return true;
     }
-    if (p_Name == "Coop_DuelAccept") {
-        if (coop::duel::Number(p_Data, id) && id == m_Duel.id &&
-            active == DuelState::Phase::SentChallenge && CanStartDuel()) {
-            const uint32_t seed = static_cast<uint32_t>(p_Now * 100000.0) ^ (m_Duel.id * 0x9E3779B9u);
+    if (name == "Coop_DuelAccept") {
+        if (coop::duel::Number(data, id) && id == m_Duel.id &&
+            active == Phase::SentChallenge && CanStartDuel()) {
+            const uint32_t seed = static_cast<uint32_t>(now*100000.0) ^ (m_Duel.id*0x9E3779B9u);
             m_Duel.seed = seed;
-            m_Duel.start = p_Now + coop::duel::kLeadSeconds;
-            m_Duel.phase = DuelState::Phase::Countdown;
+            m_Duel.start = now + coop::duel::kLeadSeconds;
+            m_Duel.phase = Phase::Countdown;
             m_Duel.rhythm = {};
+            m_Duel.remoteScore = 0;
             m_Session->SendMissionEvent("Coop_DuelStart",
                 std::to_string(m_Duel.id) + ":" + std::to_string(seed));
-            m_World.Notify("Fistfight accepted! Close the CO-OP menu and watch the arrows.");
+            m_World.Notify("Fistfight accepted! Close the CO-OP menu and get ready.");
         }
         return true;
     }
-    if (p_Name == "Coop_DuelStart") {
-        if (coop::duel::Pair(p_Data, id, x, 0xFFFFFFFFu) && id == m_Duel.id &&
-            active == DuelState::Phase::WaitingStart) {
+    if (name == "Coop_DuelStart") {
+        if (coop::duel::Pair(data, id, x, 0xFFFFFFFFu) &&
+            id == m_Duel.id && active == Phase::WaitingStart) {
             m_Duel.seed = x;
-            // Approximate the host's start time with RTT/2 compensation.
-            const double lag = std::clamp(m_FrameStatus.stats.rttMs / 2000.0, 0.0, 0.25);
-            m_Duel.start = p_Now + coop::duel::kLeadSeconds - lag;
-            m_Duel.phase = DuelState::Phase::Countdown;
+            const double lag = std::clamp(m_FrameStatus.stats.rttMs/2000.0, 0.0, .25);
+            m_Duel.start = now + coop::duel::kLeadSeconds - lag;
+            m_Duel.phase = Phase::Countdown;
             m_Duel.rhythm = {};
-            m_World.Notify("Fistfight starting! Close CO-OP and press the matching arrow once per prompt.");
+            m_Duel.remoteScore = 0;
+            m_World.Notify("Fistfight starting! Close CO-OP. Be the FIRST to hit each matching letter.");
         }
         return true;
     }
-    if (p_Name == "Coop_DuelScore") {
-        if (host && coop::duel::Pair(p_Data, id, x, coop::duel::kRounds) &&
-            id == m_Duel.id && (active == DuelState::Phase::Fighting ||
-            active == DuelState::Phase::WaitingResult)) {
-            m_Duel.remoteScore = static_cast<int>(x);
+    if (name == "Coop_DuelPress") {
+        // Only clients report reaction times; host observes its own local time.
+        // Reject scores, malformed times, duplicates, and any round too far away
+        // from the current timer (an untrusted client cannot send 12 at once).
+        if (host && coop::duel::Triple(data, id, x, y,
+                coop::duel::kRounds - 1, coop::duel::kRoundMs - 1) &&
+            id == m_Duel.id && (active == Phase::Fighting || active == Phase::WaitingResult) &&
+            m_Duel.peerMs[x] == -1 && m_Duel.outcomes[x] == 0 &&
+            std::abs(coop::duel::Round(now,m_Duel.start) - static_cast<int>(x)) <= 2) {
+            m_Duel.peerMs[x] = static_cast<int>(y);
         }
         return true;
     }
-    if (p_Name == "Coop_DuelResult") {
-        if (!host && coop::duel::Triple(p_Data, id, x, y, coop::duel::kRounds, coop::duel::kRounds) &&
-            id == m_Duel.id && active == DuelState::Phase::WaitingResult &&
-            y == static_cast<uint32_t>(m_Duel.rhythm.score)) {
-            BeginDuelResult(x, y, p_Now);
-        }
+    if (name == "Coop_DuelRound") {
+        // Host authoritative: each result contains ONE winner (host/client/tie).
+        // Reliable ordered delivery guarantees each round is applied once.
+        if (!host && coop::duel::Triple(data, id, x, y, coop::duel::kRounds-1, 2) &&
+            id == m_Duel.id && (active == Phase::Fighting || active == Phase::WaitingResult) &&
+            static_cast<int>(x) == m_Duel.nextJudgement)
+            ApplyDuelRound(static_cast<int>(x), static_cast<int>(y), now);
+        return true;
+    }
+    if (name == "Coop_DuelResult") {
+        if (!host && coop::duel::Triple(data, id, x, y, coop::duel::kRounds, coop::duel::kRounds) &&
+            id == m_Duel.id && (active == Phase::Fighting || active == Phase::WaitingResult) &&
+            m_Duel.nextJudgement == coop::duel::kRounds &&
+            x == static_cast<uint32_t>(m_Duel.remoteScore) &&
+            y == static_cast<uint32_t>(m_Duel.rhythm.score))
+            BeginDuelResult(x,y,now);
         return true;
     }
     return true;
 }
 
-void HitmanCoop::UpdateDuel(double p_Now) {
+void HitmanCoop::UpdateDuel(double now) {
     using Phase = DuelState::Phase;
-    m_DuelInputBlocked = m_DuelDownUntil > p_Now && m_Session && m_Session->Synced();
+    // Lock ordinary gameplay interactions during the letter QTE so pressing
+    // F/E/Q/R does not accidentally pick up items, attack NPCs or run away.
+    // Key scanning uses GetAsyncKeyState independently; session loss always
+    // releases the lock, and the CO-OP menu can still be opened.
+    m_DuelInputBlocked = m_Session && m_Session->Synced() &&
+        (m_DuelDownUntil > now || m_Duel.phase == Phase::Fighting ||
+         m_Duel.phase == Phase::WaitingResult);
+    const bool fighting = m_Duel.phase == Phase::Fighting ||
+                          m_Duel.phase == Phase::WaitingResult;
+    const bool opponentDown = m_Duel.phase == Phase::Result && m_Duel.verdict > 0;
+    m_World.SetDuelMotion(m_DuelAnimationsSetting ?
+        coop::duel_motion::Sample(now, m_Duel.lastRemoteHitAt,
+            m_Duel.lastRemoteRecoilAt, m_Duel.resultAt, opponentDown, fighting)
+        : coop::duel_motion::Cue {});
+
     if (!m_Session || !m_Session->Synced() || !m_World.IsInScene()) {
         if (m_Duel.phase != Phase::Idle) m_Duel = {};
         m_DuelDownUntil = -100.0;
         m_DuelInputBlocked = false;
+        m_World.SetDuelMotion({});
         return;
     }
     if (m_Duel.phase == Phase::Idle) return;
     if (m_Duel.phase == Phase::Result) {
-        if (p_Now - m_Duel.resultAt > 6.0) m_Duel = {};
+        if (now - m_Duel.resultAt > 6.0) m_Duel = {};
         return;
     }
     if ((m_Duel.phase == Phase::SentChallenge || m_Duel.phase == Phase::ReceivedChallenge ||
-         m_Duel.phase == Phase::WaitingStart) && p_Now - m_Duel.created > 20.0) {
+         m_Duel.phase == Phase::WaitingStart) && now-m_Duel.created > 20.0) {
         m_World.Notify("Fistfight invitation timed out.");
         m_Duel = {};
-        m_LastDuelAt = p_Now;
+        m_LastDuelAt = now;
         return;
     }
-    if (m_Duel.phase == Phase::Countdown && p_Now >= m_Duel.start) {
+    if (m_Duel.phase == Phase::Countdown && now >= m_Duel.start) {
         m_Duel.phase = Phase::Fighting;
-        m_Duel.keysHeld[0] = m_Duel.keysHeld[1] = m_Duel.keysHeld[2] = m_Duel.keysHeld[3] = false;
+        std::fill(std::begin(m_Duel.keysHeld),std::end(m_Duel.keysHeld),false);
     }
     if (m_Duel.phase == Phase::Fighting) {
-        const std::array<int, 4> keys { VK_UP, VK_RIGHT, VK_DOWN, VK_LEFT };
-        // GetAsyncKeyState is used by the existing mod hotkeys; never score when
-        // the user is typing, in pause/UI, or another window is focused.
+        const std::array<int,4> keys { 'E','F','Q','R' };
         const bool allowed = KeyAllowed() && m_WindowActive;
-        for (int i = 0; i < 4; ++i) {
-            const bool down = allowed && (GetAsyncKeyState(keys[i]) & 0x8000) != 0;
-            if (down && !m_Duel.keysHeld[i])
-                m_Duel.rhythm.Press(m_Duel.seed, i, p_Now, m_Duel.start);
+        const int round = coop::duel::Round(now, m_Duel.start);
+        for (int i=0;i<4;++i) {
+            const bool down = allowed && (GetAsyncKeyState(keys[i]) & 0x8000)!=0;
+            if (down && !m_Duel.keysHeld[i] && round >= 0 &&
+                round < coop::duel::kRounds && m_Duel.localMs[round] < 0 &&
+                i == coop::duel::Prompt(m_Duel.seed,round)) {
+                const double elapsed = (now-m_Duel.start-
+                    round*coop::duel::kSecondsPerRound)*1000.0;
+                const int ms = std::clamp(static_cast<int>(elapsed),0,coop::duel::kRoundMs-1);
+                m_Duel.localMs[round] = ms;
+                if (m_Session->Status().role == coop::SessionRole::Client) {
+                    m_Session->SendMissionEvent("Coop_DuelPress",
+                        std::to_string(m_Duel.id)+":"+std::to_string(round)+":"+std::to_string(ms));
+                }
+            }
             m_Duel.keysHeld[i] = down;
         }
-        if (coop::duel::Round(p_Now, m_Duel.start) >= coop::duel::kRounds) {
+        if (round >= coop::duel::kRounds) {
             m_Duel.phase = Phase::WaitingResult;
-            m_Duel.submitted = true;
-            m_Duel.created = p_Now; // Result-response timeout anchor.
-            if (m_Session->Status().role == coop::SessionRole::Client)
-                m_Session->SendMissionEvent("Coop_DuelScore",
-                    std::to_string(m_Duel.id) + ":" + std::to_string(m_Duel.rhythm.score));
+            m_Duel.created = now;
         }
     }
-    if (m_Duel.phase == Phase::WaitingResult) {
-        const bool host = m_Session->Status().role == coop::SessionRole::Host;
-        if (host && m_Duel.remoteScore >= 0) {
+    if ((m_Duel.phase == Phase::Fighting || m_Duel.phase == Phase::WaitingResult) &&
+        m_Session->Status().role == coop::SessionRole::Host) {
+        // Equal reaction times are a tie (35ms tolerance). A single hit is
+        // confirmed only after the other side had a chance to react / deliver.
+        while (m_Duel.nextJudgement < coop::duel::kRounds) {
+            const int round = m_Duel.nextJudgement;
+            const bool both = m_Duel.localMs[round] >= 0 && m_Duel.peerMs[round] >= 0;
+            const double sendGrace = .55 + std::clamp(m_FrameStatus.stats.rttMs / 1000., 0., .4);
+            const bool expired = now >= m_Duel.start +
+                (round + 1)*coop::duel::kSecondsPerRound + sendGrace;
+            if (!both && !expired) break;
+            const int winner = coop::duel::Judge(m_Duel.localMs[round],m_Duel.peerMs[round]);
+            if (winner < 0) break; // Do not accept bogus reaction time.
+            m_Session->SendMissionEvent("Coop_DuelRound",
+                std::to_string(m_Duel.id)+":"+std::to_string(round)+":"+std::to_string(winner));
+            ApplyDuelRound(round,winner,now);
+        }
+        if (m_Duel.nextJudgement == coop::duel::kRounds) {
+            // Already 12 round results have been queued in reliable order.
             const uint32_t hs = static_cast<uint32_t>(m_Duel.rhythm.score);
             const uint32_t cs = static_cast<uint32_t>(m_Duel.remoteScore);
             m_Session->SendMissionEvent("Coop_DuelResult",
-                std::to_string(m_Duel.id) + ":" + std::to_string(hs) + ":" + std::to_string(cs));
-            BeginDuelResult(hs, cs, p_Now);
-        } else if (p_Now - m_Duel.created > 7.0) {
-            m_World.Notify("Fistfight result timed out; nobody was knocked down.");
-            m_Duel = {};
-            m_LastDuelAt = p_Now;
+                std::to_string(m_Duel.id)+":"+std::to_string(hs)+":"+std::to_string(cs));
+            BeginDuelResult(hs,cs,now);
         }
+    }
+    if (m_Duel.phase == Phase::WaitingResult && now-m_Duel.created > 8.0) {
+        m_World.Notify("Fistfight results timed out; neither player is knocked down.");
+        m_Duel = {};
+        m_LastDuelAt = now;
     }
 }

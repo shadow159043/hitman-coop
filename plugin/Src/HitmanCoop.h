@@ -22,6 +22,7 @@ class ZTemplateEntityFactory;
 #include "SdkWorld.h"
 #include "TestChannel.h"
 #include "coop/Duel.h"
+#include "coop/DuelMotion.h"
 #include "coop/GameEvents.h"
 #include "coop/RelaySocket.h"
 #include "coop/Session.h"
@@ -111,6 +112,15 @@ private:
         double created = 0.0, start = 0.0, resultAt = 0.0;
         bool initiated = false, submitted = false, keysHeld[4] {};
         int remoteScore = -1, verdict = 0; // verdict: 1 local won, -1 local lost, 0 tie
+        double lastRemoteHitAt = -100.0;
+        double lastRemoteRecoilAt = -100.0;
+        int lastRemoteHitRound = -1;
+        std::array<int, coop::duel::kRounds> localMs, peerMs;
+        std::array<int, coop::duel::kRounds> outcomes {};
+        int nextJudgement = 0;
+        double lastExchangeAt = -100.0;
+        int lastExchange = 0; // -1 local took punch, +1 local landed punch, 0 tie
+        DuelState() { localMs.fill(-1); peerMs.fill(-1); }
         coop::duel::Rhythm rhythm;
     };
     DuelState m_Duel;
@@ -122,6 +132,8 @@ private:
     bool CanStartDuel() const;
     void UpdateDuel(double p_Now);
     void BeginDuelResult(uint32_t p_HostScore, uint32_t p_ClientScore, double p_Now);
+    void ApplyDuelRound(int p_Round, int p_Winner, double p_Now);
+    void ApplyDuelPunch();
     bool OnDuelEvent(const std::string& p_Name, const std::string& p_Json, double p_Now);
     void DrawDuel();
 
@@ -358,6 +370,7 @@ private:
     bool m_ShowCompass = false;
     bool m_TargetAssist = false;
     bool m_FriendlyFire = false; // Each player explicitly opts in, default OFF.
+    bool m_DuelAnimations = false; // Risk-free opt-in for procedural visual stand-in poses.
     bool m_Streamer = false;
     bool m_AutoCopyCode = true;
     bool m_Feet = false;
@@ -390,6 +403,7 @@ private:
     std::atomic<bool> m_MapNoPauseSetting { false };
     std::atomic<bool> m_TargetAssistSetting { false };
     std::atomic<bool> m_FriendlyFireSetting { false };
+    std::atomic<bool> m_DuelAnimationsSetting { false };
     std::atomic<bool> m_FeetSetting { false };
     std::atomic<int> m_SyncQualitySetting { 1 };
     std::atomic<int> m_MaxMarksSetting { 1 };

@@ -1377,9 +1377,12 @@ TEST(Session_DuelInviteAcceptScoreAndResultReliableBothWays) {
     d.host.SendMissionEvent("Coop_DuelStart", "40123:149297");
     d.Step(0.2);
     CHECK(d.clientWorld.peerEvents.back() == "Coop_DuelStart:40123:149297");
-    d.client.SendMissionEvent("Coop_DuelScore", "40123:8");
+    d.client.SendMissionEvent("Coop_DuelPress", "40123:4:123");
     d.Step(0.2);
-    CHECK(d.hostWorld.peerEvents.back() == "Coop_DuelScore:40123:8");
+    CHECK(d.hostWorld.peerEvents.back() == "Coop_DuelPress:40123:4:123");
+    d.host.SendMissionEvent("Coop_DuelRound", "40123:4:2");
+    d.Step(0.2);
+    CHECK(d.clientWorld.peerEvents.back() == "Coop_DuelRound:40123:4:2");
     d.host.SendMissionEvent("Coop_DuelResult", "40123:9:8");
     d.Step(0.2);
     CHECK(d.clientWorld.peerEvents.back() == "Coop_DuelResult:40123:9:8");

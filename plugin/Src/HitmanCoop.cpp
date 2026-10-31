@@ -322,6 +322,7 @@ void HitmanCoop::LoadSettings() {
     m_ShowCompass = GetSettingBool("general", "show_compass", false);
     m_TargetAssist = GetSettingBool("general", "target_assist", false);
     m_FriendlyFire = GetSettingBool("general", "friendly_fire", false);
+    m_DuelAnimations = GetSettingBool("general", "duel_animations", false);
     m_Streamer = GetSettingBool("general", "streamer_mode", false);
     m_AutoCopyCode = GetSettingBool("general", "copy_join_code", true);
     m_Feet = GetSettingBool("general", "feet", false);
@@ -405,6 +406,7 @@ void HitmanCoop::ApplySettings() {
     m_MapNoPauseSetting = m_MapNoPause;
     m_TargetAssistSetting = m_TargetAssist;
     m_FriendlyFireSetting = m_FriendlyFire;
+    m_DuelAnimationsSetting = m_DuelAnimations;
     m_FeetSetting = m_Feet;
     m_SyncQualitySetting = m_SyncQuality;
     m_MaxMarksSetting = m_MaxMarks;
@@ -450,6 +452,7 @@ void HitmanCoop::SaveSettings() {
     SetSettingBool("general", "show_compass", m_ShowCompass);
     SetSettingBool("general", "target_assist", m_TargetAssist);
     SetSettingBool("general", "friendly_fire", m_FriendlyFire);
+    SetSettingBool("general", "duel_animations", m_DuelAnimations);
     SetSettingBool("general", "streamer_mode", m_Streamer);
     SetSettingBool("general", "copy_join_code", m_AutoCopyCode);
     SetSettingBool("general", "feet", m_Feet);

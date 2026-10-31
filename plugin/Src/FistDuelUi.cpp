@@ -34,7 +34,7 @@ void HitmanCoop::DrawDuel() {
             ImGui::TextDisabled("Close CO-OP (~), then hit matching arrow keys");
         } else if (state.phase == Phase::Fighting) {
             const int round = coop::duel::Round(now, state.start);
-            static constexpr const char* names[] = { "UP", "RIGHT", "DOWN", "LEFT" };
+            static constexpr const char* names[] = { "E", "F", "Q", "R" };
             if (round >= 0 && round < coop::duel::kRounds) {
                 const int need = coop::duel::Prompt(state.seed, round);
                 const double left = (round + 1) * coop::duel::kSecondsPerRound - (now - state.start);
@@ -42,7 +42,15 @@ void HitmanCoop::DrawDuel() {
                 ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 2.8f);
                 ImGui::TextColored(ImVec4(.45f, 1.f, .65f, 1.f), "%s", names[need]);
                 ImGui::PopFont();
-                ImGui::TextDisabled("One correct key per round. Wrong keys get no points.");
+                ImGui::TextDisabled("FIRST correct press wins the exchange. Latency-adjusted reaction times.");
+                if (now - state.lastExchangeAt < 0.65) {
+                    if (state.lastExchange > 0)
+                        ImGui::TextColored(ImVec4(.4f,1.f,.65f,1.f), "PUNCH LANDED!");
+                    else if (state.lastExchange < 0)
+                        ImGui::TextColored(ImVec4(1.f,.5f,.3f,1.f), "YOU WERE HIT!");
+                    else
+                        ImGui::TextDisabled("Simultaneous presses: DRAW");
+                }
             }
         } else if (state.phase == Phase::WaitingResult) {
             ImGui::Text("Finished! Waiting for the scores...");
@@ -56,9 +64,9 @@ void HitmanCoop::DrawDuel() {
             } else
                 ImGui::Text("DRAW - both fought evenly!");
         }
-        ImGui::Text("Your score: %d / %d", state.rhythm.score, coop::duel::kRounds);
+        ImGui::Text("Your punches: %d / %d", state.rhythm.score, coop::duel::kRounds);
         if (state.remoteScore >= 0)
-            ImGui::Text("Partner score: %d / %d", state.remoteScore, coop::duel::kRounds);
+            ImGui::Text("Partner punches: %d / %d", state.remoteScore, coop::duel::kRounds);
     }
     ImGui::End();
 }

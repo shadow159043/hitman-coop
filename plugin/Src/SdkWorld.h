@@ -8,6 +8,7 @@
 #include <unordered_set>
 
 #include "coop/Session.h"
+#include "coop/DuelMotion.h"
 
 #include "PartnerPuppet.h"
 #include "PoseHook.h"
@@ -40,6 +41,10 @@ public:
     void SetRemoteOutfit(const coop::OutfitDesc& p_Outfit) override;
     bool GetLocalPose(coop::Pose& p_Out) override;
     void ShowRemotePose(const coop::Pose& p_Pose) override;
+    // Cosmetic-only, bounded punch/recoil poses on the partner stand-in. The
+    // game still controls its own 47 and NPC knockouts are never invoked.
+    void SetDuelMotion(coop::duel_motion::Cue p_Cue) { m_DuelMotion = p_Cue; }
+    void UpdateDuelPose();
     bool GetLocalSkeleton(std::vector<int16_t>& p_Out) override;
     void SetRemoteSkeleton(const std::vector<int16_t>& p_Parents) override;
     bool GetLocalVictim(uint64_t& p_Id, coop::Transform& p_Xf, coop::Pose& p_Pose, uint8_t& p_Flags) override;
@@ -406,6 +411,11 @@ private:
     std::vector<PoseHook::Bone> m_PoseScratch;
     std::vector<PoseHook::Bone> m_LocalBones;
     std::vector<PoseHook::Bone> m_RemoteBones;
+    std::vector<PoseHook::Bone> m_DuelPoseScratch;
+    coop::duel_motion::Cue m_DuelMotion;
+    bool m_DuelPoseApplied = false;
+    bool m_DuelArmChecked = false;
+    int m_DuelArmLeft = -1, m_DuelArmRight = -1;
     // The NPC our 47 is choking, killing or dragging, streamed to the partner.
     void PickLocalVictim();
     ZActor* m_LocalVictim = nullptr;

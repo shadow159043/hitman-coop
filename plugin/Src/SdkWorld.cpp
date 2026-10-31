@@ -142,6 +142,11 @@ void SdkWorld::OnSceneCleared() {
     m_RigRejected.clear();
     m_PartnerKills.clear();
     g_Pacified.clear();
+    m_DuelMotion = {};
+    m_DuelPoseApplied = false;
+    m_DuelPoseScratch.clear();
+    m_DuelArmChecked = false;
+    m_DuelArmLeft = m_DuelArmRight = -1;
     m_Marks.clear();
     m_PartnerWantsPause = false;
     m_RestartAskedAt = -1.0;
@@ -741,6 +746,7 @@ void SdkWorld::UpdatePoses() {
     }
 
     PoseHook::SetTarget(s_Target);
+    UpdateDuelPose();
     PickLocalVictim();
     ApplyPendingPuppets();
 }
@@ -2075,6 +2081,9 @@ void SdkWorld::ResetPartnerRig(double p_CheckIn) {
     // Not even one more frame with the old match on the new body.
     PoseHook::ClearTargetPose();
     m_PartnerRig = 0;
+    m_DuelArmChecked = false;
+    m_DuelArmLeft = m_DuelArmRight = -1;
+    m_DuelPoseApplied = false;
     m_PartnerRigCheckAt = m_Now + p_CheckIn;
     m_RigParents.clear();
     m_BoneMap.clear();

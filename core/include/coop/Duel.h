@@ -9,6 +9,8 @@
 
 namespace coop::duel {
 constexpr int kRounds = 12;
+constexpr int kTieWindowMs = 35;
+constexpr int kRoundMs = 850;
 constexpr double kSecondsPerRound = 0.85;
 constexpr double kLeadSeconds = 3.5;
 constexpr double kDuration = kRounds * kSecondsPerRound;
@@ -30,6 +32,18 @@ inline int Round(double p_Now, double p_Start) {
         return -1;
     const double t = (p_Now - p_Start) / kSecondsPerRound;
     return t >= kRounds ? kRounds : static_cast<int>(t);
+}
+// Each game records elapsed local time from its OWN displayed prompt. Comparing
+// packet-arrival times would unfairly favor whoever hosts the session.
+// -1 means no valid press; -2 means an invalid untrusted value.
+inline int Judge(int p_HostMs, int p_ClientMs) {
+    if (p_HostMs < -1 || p_HostMs >= kRoundMs ||
+        p_ClientMs < -1 || p_ClientMs >= kRoundMs) return -2;
+    if (p_HostMs < 0 && p_ClientMs < 0) return 0;
+    if (p_ClientMs < 0) return 1;
+    if (p_HostMs < 0) return 2;
+    if (std::abs(p_HostMs - p_ClientMs) <= kTieWindowMs) return 0;
+    return p_HostMs < p_ClientMs ? 1 : 2;
 }
 inline int Winner(int p_HostScore, int p_ClientScore) {
     if (p_HostScore < 0 || p_HostScore > kRounds ||
