@@ -282,6 +282,7 @@ public:
         double downAt = 0.0;
         bool hidden = false;
         bool gone = false;
+        bool handled = false; // 47 actually dragged or dumped it; not a physics drift.
     };
     std::unordered_map<uint64_t, Body> m_Bodies;
     std::unordered_map<uint64_t, double> m_PeerBodyMoveUntil; // Avoid bounce-back item events from a freshly mirrored ragdoll.

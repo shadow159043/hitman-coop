@@ -1,5 +1,5 @@
 # Inspect a built setup without running INSTALL or modifying the game.
-param([string]$SetupPath = (Join-Path $PSScriptRoot "..\_dist\HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.14-DUEL-ANIMATION-FIX.exe"))
+param([string]$SetupPath = (Join-Path $PSScriptRoot "..\_dist\HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.15-UPSTREAM-0132-COMPAT-TEST.exe"))
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -24,9 +24,15 @@ try {
         if (-not $ScriptText.Contains($Marker)) { throw "Embedded installer lacks required feature: $Marker" }
     }
     Write-Output "PASS: Auto-discovery and disabled-mod guard embedded in installer"
-    $OriginalDll = Join-Path $Root "_build-sdk420\plugin\RelWithDebInfo\HitmanCoop.dll"
+    $OriginalDll = Join-Path $Root "_build-sdk421\plugin\RelWithDebInfo\HitmanCoop.dll"
     if ((Get-FileHash $Dll).Hash -ne (Get-FileHash $OriginalDll).Hash) { throw "Installer contains stale plugin" }
     Write-Output "PASS: Embedded plugin matches latest compiled in-game Artur UI"
+$SdkExpected = Join-Path $Root "_deps-sdk421\sdk-release\ZHMModSDK.dll"
+$SdkActual = Join-Path $Extracted "files\ZHMModSDK.dll"
+if ((Get-FileHash $SdkExpected).Hash -ne (Get-FileHash $SdkActual).Hash) {
+    throw "R2.15 embeds the wrong SDK runtime: expected verified v4.2.1"
+}
+Write-Output "PASS: Embedded SDK matches verified v4.2.1 release"
     $Actual = @( & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $InstallScript -ListGames )
     if ($LASTEXITCODE -ne 0) { throw "Embedded installer game detection returned an error" }
     if (-not @($Actual | Where-Object { Test-Path (Join-Path $_ "Retail\HITMAN3.exe") }).Count) {
@@ -34,7 +40,7 @@ try {
     }
     Write-Output ("PASS: Embedded installer detected HITMAN: " + ($Actual -join "; "))
 
-    $Zip = Join-Path $Root "_dist\HitmanCoop-0.12.13-3290-sdk420-EXPERIMENTAL-R2.14-DUEL-ANIMATION-FIX.zip"
+    $Zip = Join-Path $Root "_dist\HitmanCoop-0.12.14-3290-sdk421-EXPERIMENTAL-R2.15-UPSTREAM-0132-COMPAT-TEST.zip"
     $Archive = [IO.Compression.ZipFile]::OpenRead($Zip)
     try {
         $Plugin = @($Archive.Entries | Where-Object { $_.FullName -match '(?i)[\\/]Retail[\\/]mods[\\/]HitmanCoop.dll$' }) | Select-Object -First 1
@@ -46,7 +52,7 @@ try {
         if ($ActualHash -ne (Get-FileHash $OriginalDll).Hash) {throw "R2.2 ZIP does not match compiled plugin"}
     }
     finally { $Archive.Dispose() }
-    Write-Output "PASS: R2.14 animation fix ZIP has the identical branded plugin"
+    Write-Output "PASS: R2.15 upstream compatibility ZIP has the identical branded plugin"
     Write-Output "PASS: All package checks completed; no game files changed"
 }
 finally {

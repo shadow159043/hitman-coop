@@ -27,7 +27,7 @@ namespace HitmanCoopSetup
 {
     static class Program
     {
-        public const string Version = "0.12.13";
+        public const string Version = "0.12.14";
         public const string Author = "Jordan Rodrigues"; // Original creator and copyright holder.
         public const string EditionBy = "Artur"; // Credit for this compatibility edition.
 

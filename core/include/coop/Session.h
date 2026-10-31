@@ -97,7 +97,7 @@ public:
 
 struct SessionConfig {
     std::string playerName = "Agent";
-    std::string modVersion = "0.12.13";
+    std::string modVersion = "0.12.14";
     std::string gameVersion = "unknown";
     std::string roomCode;    // Host's expected code; client's code to present at handshake.
     std::string roomPassword; // Optional host password / client entry (not saved to configuration).
@@ -435,6 +435,9 @@ private:
     Transform m_RemoteAvatarLast;
     bool m_HaveRemoteAvatar = false;
     double m_NextOwnerCheck = 0.0;
+    // Upstream 0.13.1: host temporarily delegates NPCs chasing/arresting the
+    // client's 47, even when the two players stand together.
+    std::unordered_map<uint64_t, double> m_ClientChasedUntil;
     double m_NextNpcPoseSend = 0.0;
     uint32_t m_PuppetFrame = 0;
     std::vector<uint64_t> m_PoseIds;

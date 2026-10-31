@@ -8,6 +8,11 @@
 
 namespace coop {
 
+namespace {
+// Upstream 0.13.1: above this tension NPCs can be arresting or fighting 47.
+constexpr uint8_t c_ChasingTension = 6;
+}
+
 // NPCs that haven't moved are still resent this often, so a lost snapshot can't leave one stale forever.
 static constexpr double c_NpcRefreshInterval = 2.0;
 static constexpr float c_NpcMoveThreshold = 0.05f;
@@ -934,8 +939,13 @@ void Session::HandleMessage(const Message& p_Msg, double p_Now) {
         case MsgType::Alerts: {
             MsgAlerts s_Alerts;
 
-            if (Decode(p_Msg.payload, s_Alerts) && s_Alerts.epoch == m_Epoch && IsSynced())
+            if (Decode(p_Msg.payload, s_Alerts) && s_Alerts.epoch == m_Epoch && IsSynced()) {
                 m_World.ApplyPeerAlerts(s_Alerts.alerts);
+                if (m_Role == SessionRole::Host)
+                    for (const auto& alert : s_Alerts.alerts)
+                        if (alert.tension >= c_ChasingTension)
+                            m_ClientChasedUntil[alert.id] = p_Now + 2.0;
+            }
 
             break;
         }
@@ -1438,6 +1448,7 @@ void Session::ReleasePuppets() {
     m_Puppeted.clear();
     m_Puppets.clear();
     m_NpcOwner.clear();
+    m_ClientChasedUntil.clear();
     m_NpcSent.clear();
     m_PoseSent.clear();
     m_HaveRemoteAvatar = false;
@@ -1460,9 +1471,20 @@ void Session::UpdateSharedNpcs(double p_Now) {
             const auto& s_Npcs = Npcs();
             std::vector<NpcOwnership> s_Changes;
 
+            // Don't keep expired chase records from earlier combat/mission stages.
+            std::erase_if(m_ClientChasedUntil, [p_Now](const auto& kv) {
+                return kv.second <= p_Now;
+            });
             for (const auto& s_Npc : s_Npcs) {
-                if (!s_Npc.Alive() || KnockedOut(s_Npc) || s_Npc.tension >= 4)
+                if (!s_Npc.Alive() || KnockedOut(s_Npc))
                     continue;
+                if (const auto it = m_ClientChasedUntil.find(s_Npc.id);
+                    it != m_ClientChasedUntil.end() && it->second > p_Now) {
+                    if (OwnerOf(s_Npc.id) != NpcOwner_Client)
+                        s_Changes.push_back({ s_Npc.id, NpcOwner_Client });
+                    continue;
+                }
+                if (s_Npc.tension >= 4) continue;
 
                 const float s_ToHost = Distance(s_Local.pos, s_Npc.xf.pos);
                 const float s_ToClient = Distance(m_RemoteAvatarLast.pos, s_Npc.xf.pos);

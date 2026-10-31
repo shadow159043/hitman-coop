@@ -7,11 +7,11 @@ param(
 $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $R2 = Join-Path $Root "_dist\HitmanCoop-0.12.1-3290-sdk420-EXPERIMENTAL-R2"
-$NetTest = Join-Path $Root "_build-sdk420\core\RelWithDebInfo\HitmanCoop-NetTest.exe"
-$NewDll = Join-Path $Root "_build-sdk420\plugin\RelWithDebInfo\HitmanCoop.dll"
+$NetTest = Join-Path $Root "_build-sdk421\core\RelWithDebInfo\HitmanCoop-NetTest.exe"
+$NewDll = Join-Path $Root "_build-sdk421\plugin\RelWithDebInfo\HitmanCoop.dll"
 $Stage = Join-Path $OutDir "_artur-r2-stage"
 $Payload = Join-Path $OutDir "_artur-r2-payload.zip"
-$Setup = Join-Path $OutDir "HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.14-DUEL-ANIMATION-FIX.exe"
+$Setup = Join-Path $OutDir "HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.15-UPSTREAM-0132-COMPAT-TEST.exe"
 $Csc = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 $Fx = Split-Path $Csc
 foreach ($f in @((Join-Path $R2 "Retail\mods\HitmanCoop.dll"), (Join-Path $R2 "Retail\ZHMModSDK.dll"), $NetTest, $NewDll, $Csc)) {
@@ -21,13 +21,19 @@ New-Item -ItemType Directory -Force $OutDir | Out-Null
 Remove-Item $Stage,$Payload -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force (Join-Path $Stage "files\mods") | Out-Null
 Copy-Item (Join-Path $R2 "Retail\*") (Join-Path $Stage "files") -Recurse -Force
+$Sdk421 = Join-Path $Root "_deps-sdk421\sdk-release"
+foreach ($name in @("ZHMModSDK.dll","dinput8.dll","crashpad_handler.exe","discord_game_sdk.dll","ResourceLib_HM3.dll")) {
+    $source = Join-Path $Sdk421 $name
+    if (!(Test-Path $source)) { throw "Missing official SDK421 runtime: $source" }
+    Copy-Item $source (Join-Path $Stage "files\$name") -Force
+}
 # Use the freshly built in-game UI DLL; do not accidentally repackage the old R2 UI.
 Copy-Item $NewDll (Join-Path $Stage "files\mods\HitmanCoop.dll") -Force
 Copy-Item $NetTest (Join-Path $Stage "Test-Connection.exe")
 Copy-Item (Join-Path $R2 "HITMAN-COOP-LICENSE.txt") (Join-Path $Stage "LICENSE.txt")
 Copy-Item (Join-Path $R2 "SDK-LICENSE.txt") (Join-Path $Stage "SDK-LICENSE.txt")
 Copy-Item (Join-Path $R2 "READ-ME-FIRST.txt") (Join-Path $Stage "READ-ME-FIRST.txt")
-$ReadmeIntro = "R2.14 VISIBLE DUEL ANIMATIONS FIX / v0.12.13 (protocol 16): repair cosmetic fistfight stand-in animations, previously invisible because shoulder bone selector gave -1/-1 on both real 231-bone rigs. New mirrored-arm matching across any axis and upper-body hierarchy fallback plus more pronounced, bounded jab/recoil, preserved on new remote poses. Added duel pose ACTIVE/blocked/mapping logs. DO NOT CONFUSE WITH NATIVE HITMAN NPC MELEE: this is an experimental skeleton-pose effect only. Optional Duel animations toggle OFF by default; both players enable to test. R2.13 first-correct-key punching, nonlethal HP change and 3-second stun preserved. Two-PC visible-animation success NOT VERIFIED. Both PCs need R2.14/v0.12.13 with HITMAN 3.290.1.x and ZHMModSDK 4.2.0. R2.13 rollback intact. Original mod by Jordan Rodrigues, GPL-3.0-or-later."
+$ReadmeIntro = "R2.15 UPSTREAM v0.13.2 COMPATIBILITY PREVIEW, Artur Edition v0.12.14, protocol 16: portable item-list relocation for HITMAN 3.290.1, 47-owned subcontroller items and improved held items, client arrest/chase NPC ownership, protection against bodies disappearing from physics settling, updated official ZHMModSDK v4.2.1. Preserves R2.9 performance optimization, R2.11 friendly fire, R2.13 fistfight gameplay, and optional R2.14 pose animations. This is a PARTIAL port, not original 0.13.2. Original auto-updater and full body-clothes syncing are NOT imported; original 0.13.2 protocol 13 cannot connect to this edition. Both players must install v0.12.14 with HITMAN 3.290.1.x and SDK4.2.1. Experimental and not tested in two live games; R2.14 remains available for rollback. Original mod by Jordan Rodrigues, GPL-3.0-or-later."
 $ReadmeOriginal = Get-Content (Join-Path $Stage "READ-ME-FIRST.txt") -Raw
 Set-Content (Join-Path $Stage "READ-ME-FIRST.txt") -Value ($ReadmeIntro + [Environment]::NewLine + $ReadmeOriginal) -Encoding UTF8
 Copy-Item (Join-Path $R2 "NATIVE-AUDIT.md") (Join-Path $Stage "NATIVE-AUDIT.md")
@@ -56,10 +62,13 @@ if ($Installer -notmatch 'requires HITMAN 3.290.1' -or $Installer -notmatch 'Ass
 }
 Set-Content -Path (Join-Path $Stage "installer.ps1") -Value $Installer -Encoding UTF8
 
-$R21 = Join-Path $OutDir "HitmanCoop-0.12.13-3290-sdk420-EXPERIMENTAL-R2.14-DUEL-ANIMATION-FIX"
+$R21 = Join-Path $OutDir "HitmanCoop-0.12.14-3290-sdk421-EXPERIMENTAL-R2.15-UPSTREAM-0132-COMPAT-TEST"
 $Zip21 = "$R21.zip"
 Remove-Item $R21,$Zip21 -Recurse -Force -ErrorAction SilentlyContinue
 Copy-Item -Path $R2 -Destination $R21 -Recurse
+foreach ($name in @("ZHMModSDK.dll","dinput8.dll","crashpad_handler.exe","discord_game_sdk.dll","ResourceLib_HM3.dll")) {
+    Copy-Item (Join-Path $Sdk421 $name) (Join-Path $R21 "Retail\$name") -Force
+}
 Copy-Item $NewDll (Join-Path $R21 "Retail\mods\HitmanCoop.dll") -Force
 Set-Content (Join-Path $R21 "READ-ME-FIRST.txt") -Value ($ReadmeIntro + [Environment]::NewLine + (Get-Content (Join-Path $R2 "READ-ME-FIRST.txt") -Raw)) -Encoding UTF8
 $checks = @(Get-ChildItem $R21 -Recurse -File | Where-Object { $_.Name -ne "SHA256SUMS.txt" } | ForEach-Object { "{0}  {1}" -f (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant(), $_.FullName.Substring($R21.Length+1).Replace('\','/') })
@@ -67,7 +76,7 @@ Set-Content (Join-Path $R21 "SHA256SUMS.txt") -Value $checks -Encoding ascii
 Compress-Archive -Path $R21 -DestinationPath $Zip21 -CompressionLevel Optimal -Force
 $ZipHash = (Get-FileHash -Algorithm SHA256 $Zip21).Hash.ToLowerInvariant()
 Set-Content "$Zip21.sha256" "$ZipHash  $(Split-Path -Leaf $Zip21)"
-Write-Host "R2.14 ANIMATION FIX ZIP: $Zip21"
+Write-Host "R2.15 UPSTREAM 0132 COMPAT ZIP: $Zip21"
 Compress-Archive -Path (Join-Path $Stage "*") -DestinationPath $Payload -CompressionLevel Optimal -Force
 $Icon = Join-Path $Root "installer\setup\setup.ico"
 $Manifest = Join-Path $Root "installer\setup\setup.manifest"
@@ -78,5 +87,5 @@ $Hash = (Get-FileHash -Algorithm SHA256 $Setup).Hash.ToLowerInvariant()
 Set-Content -Path "$Setup.sha256" -Value "$Hash  $(Split-Path $Setup -Leaf)"
 Write-Host "OUTPUT: $Setup"
 Write-Host "SHA256: $Hash"
-Write-Host "NOTE: R2.14 DUEL ANIMATION FIX: new shoulder/torso mapping and pose diagnostics; both players need v0.12.13/protocol 16 and game 3.290.1.x."
+Write-Host "NOTE: R2.15 upstream partial integration: matching Artur v0.12.14/protocol16 and SDK4.2.1 on BOTH PCs; live unverified."
 Remove-Item $Stage,$Payload -Recurse -Force

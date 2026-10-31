@@ -11,6 +11,7 @@
 #include "coop/PartnerPresence.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <map>
 #include <cmath>
 #include <cctype>
@@ -31,6 +32,7 @@
 #include <Glacier/ZAction.h>
 #include <Glacier/ZItem.h>
 #include <Glacier/ZWorldInventory.h>
+#include <Glacier/ZInventory.h>
 #include <Glacier/ZPhysics.h>
 #include <Glacier/ZCameraEntity.h>
 #include <Glacier/ZCollision.h>
@@ -2512,12 +2514,63 @@ bool SdkWorld::IsPartnerKillEvent(const std::string& p_EventJson, bool p_EvenTar
 }
 
 namespace {
+// Upstream v0.13.2 compatibility: HITMAN 3.290.1 moved the inventory
+// vector from ZWorldInventory::m_aItems (+0x30) to +0x70. Check both
+// layouts before enumerating rather than reading a stale SDK member.
+struct ItemList {
+    const TEntityRef<IItemBase>* begin = nullptr;
+    const TEntityRef<IItemBase>* end = nullptr;
+};
+bool LooksLikeItemList(const uint8_t* at, ItemList& out) {
+    const auto* words = reinterpret_cast<const uintptr_t*>(at);
+    const uintptr_t first = words[0], last = words[1], cap = words[2];
+    constexpr uintptr_t top = 0x00007FFFFFFFFFFFull;
+    if (!first || first > top || last > top || cap > top || first > last || last > cap ||
+        (last-first)%sizeof(TEntityRef<IItemBase>) != 0 ||
+        (last-first)/sizeof(TEntityRef<IItemBase>) > 100000)
+        return false;
+    out.begin = reinterpret_cast<const TEntityRef<IItemBase>*>(first);
+    out.end = reinterpret_cast<const TEntityRef<IItemBase>*>(last);
+    return true;
+}
+ItemList WorldItems() {
+    if (!Globals::WorldInventory) return {};
+    const auto* base = reinterpret_cast<const uint8_t*>(Globals::WorldInventory);
+    const size_t sdk = offsetof(ZWorldInventory, m_aItems);
+    ItemList items;
+    for (size_t offset : { sdk, sdk + 0x40 })
+        if (LooksLikeItemList(base + offset, items)) return items;
+    return {};
+}
+// Upstream v0.13.2: held/picked-up items can be owned by 47's character
+// or subcontroller, not only the outer ZHitman5 entity.
+struct Owner47 {
+    std::vector<const void*> refs;
+    Owner47() {
+        const auto p = SDK()->GetLocalPlayer();
+        if (!p || !p.m_pInterfaceRef) return;
+        refs.push_back(p.m_entityRef.m_pObj);
+        const auto& ch = p.m_pInterfaceRef->m_pCharacter;
+        if (!ch.m_entityRef) return;
+        refs.push_back(ch.m_entityRef.m_pObj);
+        if (!ch.m_pInterfaceRef || !ch.m_pInterfaceRef->m_rSubcontrollerContainer.m_pInterfaceRef) return;
+        const auto& box = ch.m_pInterfaceRef->m_rSubcontrollerContainer;
+        refs.push_back(box.m_entityRef.m_pObj);
+        for (const auto& sub : box.m_pInterfaceRef->m_aReferencedControllers)
+            if (sub.m_entityRef) refs.push_back(sub.m_entityRef.m_pObj);
+    }
+    bool Has(const ZEntityRef& p) const {
+        if (!p) return false;
+        return std::find(refs.begin(), refs.end(), p.m_pObj) != refs.end();
+    }
+};
+
 // Items placed in the scene share their entity id across machines; a few templates are placed
 // more than once, and those ids say nothing, so they aren't synced.
 template <class F>
 void ForEachSceneItem(F&& p_Do) {
-    if (!Globals::WorldInventory)
-        return;
+    const ItemList s_Items = WorldItems();
+    if (!s_Items.begin) return;
 
     std::unordered_map<uint64_t, int> s_Count;
 
@@ -2525,11 +2578,12 @@ void ForEachSceneItem(F&& p_Do) {
         return p_Entry.m_entityRef && p_Entry.m_entityRef.GetEntity() && p_Entry.m_entityRef->GetType();
     };
 
-    for (const auto& s_Entry : Globals::WorldInventory->m_aItems)
-        if (s_Usable(s_Entry))
-            ++s_Count[s_Entry.m_entityRef->GetType()->m_nEntityID];
+    for (const auto* it = s_Items.begin; it != s_Items.end; ++it)
+        if (s_Usable(*it))
+            ++s_Count[it->m_entityRef->GetType()->m_nEntityID];
 
-    for (const auto& s_Entry : Globals::WorldInventory->m_aItems) {
+    for (const auto* it = s_Items.begin; it != s_Items.end; ++it) {
+        const auto& s_Entry = *it;
         if (!s_Usable(s_Entry))
             continue;
 
@@ -2588,8 +2642,8 @@ void SdkWorld::CollectItemChanges(std::vector<coop::ItemChange>& p_Out) {
     };
     std::vector<ScannedItem> s_Items;
     std::unordered_map<uint64_t, size_t> s_Indexes;
-    if (Globals::WorldInventory) {
-        const size_t s_Hint = std::min<size_t>(Globals::WorldInventory->m_aItems.size(), 1024);
+    if (const auto s_WorldItems = WorldItems(); s_WorldItems.begin) {
+        const size_t s_Hint = std::min<size_t>(s_WorldItems.end - s_WorldItems.begin, 1024);
         s_Items.reserve(s_Hint);
         s_Indexes.reserve(s_Hint);
     }
@@ -2612,10 +2666,8 @@ void SdkWorld::CollectItemChanges(std::vector<coop::ItemChange>& p_Out) {
     }
     CollectDoorChanges(p_Out);
     CollectBodyChanges(p_Out);
-    const auto s_Player = SDK()->GetLocalPlayer();
-
-    if (!s_Player)
-        return;
+    const Owner47 s_Owner;
+    if (s_Owner.refs.empty()) return;
 
     for (const auto& s_Entry : s_Items) {
         const uint64_t p_Id = s_Entry.id;
@@ -2625,7 +2677,7 @@ void SdkWorld::CollectItemChanges(std::vector<coop::ItemChange>& p_Out) {
             continue;
 
         auto s_It = m_Items.find(p_Id);
-        bool s_Ours = p_Item->m_pOwner == s_Player.m_entityRef;
+        bool s_Ours = s_Owner.Has(p_Item->m_pOwner);
         // Some dropped objects retain the previous m_pOwner briefly; when this
         // actor has already tracked the item, an explicit Owned=false ends the hold.
         if (s_Ours && s_It != m_Items.end() && s_It->second.ours &&
@@ -2819,7 +2871,7 @@ void SdkWorld::ApplyPeerItem(const coop::ItemChange& p_Change) {
     m_PendingPeerItems.erase(p_Change.id);
 
     // Both took it at once: ours stays ours.
-    if (const auto s_Player = SDK()->GetLocalPlayer(); s_Player && s_Item->m_pOwner == s_Player.m_entityRef)
+    if (Owner47().Has(s_Item->m_pOwner))
         return;
 
     if (p_Change.Taken()) {
@@ -2885,6 +2937,12 @@ void SdkWorld::CollectBodyChanges(std::vector<coop::ItemChange>& p_Out) {
             s_Body.downAt = m_Now;
             s_Body.hidden = s_Actor->m_bBodyHidden;
         }
+        // Upstream 0.13.2: never interpret a body settling under physics
+        // as one moved by the player. Only a body handled locally may trigger
+        // a moved-body event; hiding a body still sends normally.
+        if (s_Actor != m_RemoteVictim &&
+            (s_Actor->m_bIsBeingDragged || s_Actor->m_bIsBeingDumped))
+            s_Body.handled = true;
 
         // Where it fell, in each game its own way (a fall takes a few seconds): nothing to tell. The
         // partner's victim moves with their stream.
@@ -2905,13 +2963,15 @@ void SdkWorld::CollectBodyChanges(std::vector<coop::ItemChange>& p_Out) {
 
         const bool s_Hidden = s_Actor->m_bBodyHidden;
         // More than a nudge (walking into a body shifts it a little), and at rest for a moment.
-        const bool s_Moved = coop::Distance(s_Xf.pos, s_Body.agreed) > 1.5f && m_Now - s_Body.stillSince > 0.6;
+        const bool s_Moved = s_Body.handled &&
+            coop::Distance(s_Xf.pos, s_Body.agreed) > 1.5f && m_Now - s_Body.stillSince > 0.6;
 
         if (s_Hidden == s_Body.hidden && !s_Moved)
             continue;
 
         s_Body.hidden = s_Hidden;
         s_Body.agreed = s_Xf.pos;
+        s_Body.handled = false;
         p_Out.push_back({ s_Id, static_cast<uint8_t>(coop::ItemFlag_Body | (s_Hidden ? coop::ItemFlag_BodyHidden : 0)), s_Xf });
 
         if (m_Trace)
@@ -2920,7 +2980,7 @@ void SdkWorld::CollectBodyChanges(std::vector<coop::ItemChange>& p_Out) {
 
     // A body the game took out of the mission (disabled) after it was put away somewhere.
     for (auto& [s_Id, s_Body] : m_Bodies) {
-        if (s_Body.gone || s_Body.hidden || m_NpcsById.contains(s_Id))
+        if (s_Body.gone || s_Body.hidden || !s_Body.handled || m_NpcsById.contains(s_Id))
             continue;
 
         for (const auto& s_Entry : Globals::ActorManager->m_activatedActors) {
@@ -3016,7 +3076,7 @@ std::string SdkWorld::BodyTest(const std::string& p_Arg) {
 namespace {
 // Our 47's item in hand: of the items it owns, the one being drawn. Items in its pockets are owned
 // but not drawn (their geometry hidden).
-ZHM5Item* HeldBy(const ZEntityRef& p_Owner, ZEntityRef* p_Ref = nullptr) {
+ZHM5Item* HeldBy(const Owner47& p_Owner, ZEntityRef* p_Ref = nullptr) {
     ZHM5Item* s_Held = nullptr;
 
     // Inventory-created weapons often have repeated template IDs, so the scene-item
@@ -3025,11 +3085,13 @@ ZHM5Item* HeldBy(const ZEntityRef& p_Owner, ZEntityRef* p_Ref = nullptr) {
     if (!Globals::WorldInventory)
         return nullptr;
 
-    for (const auto& s_Entry : Globals::WorldInventory->m_aItems) {
+    const ItemList s_Items = WorldItems();
+    for (auto* it = s_Items.begin; it && it != s_Items.end; ++it) {
+        const auto& s_Entry = *it;
         if (!s_Entry.m_entityRef || !s_Entry.m_entityRef.GetEntity())
             continue;
         auto* s_Item = s_Entry.m_entityRef.QueryInterface<ZHM5Item>();
-        if (!s_Item || s_Item->m_pOwner != p_Owner || !s_Item->m_pItemConfigDescriptor ||
+        if (!s_Item || !p_Owner.Has(s_Item->m_pOwner) || !s_Item->m_pItemConfigDescriptor ||
             !s_Item->m_rGeomentity.m_entityRef)
             continue;
         if (s_Item->m_rGeomentity.m_entityRef.GetProperty<bool>("m_bVisible").Get()) {
@@ -3058,7 +3120,8 @@ std::string SdkWorld::LocalHeldItem() const {
         return m_HeldItem;
 
     ZEntityRef s_HeldRef;
-    if (const ZHM5Item* s_Item = HeldBy(s_Player.m_entityRef, &s_HeldRef)) {
+    const Owner47 s_Owner;
+    if (const ZHM5Item* s_Item = HeldBy(s_Owner, &s_HeldRef)) {
         m_HeldItem = s_Item->m_pItemConfigDescriptor->m_ItemID.ToString().c_str();
         m_HeldIsWeapon = s_HeldRef.QueryInterface<ZHM5ItemWeapon>() != nullptr;
     }
@@ -3068,12 +3131,13 @@ std::string SdkWorld::LocalHeldItem() const {
     if (Globals::WorldInventory) {
         coop::Transform s_Local;
         if (GetLocalAvatar(s_Local)) {
-            for (const auto& s_Entry : Globals::WorldInventory->m_aItems) {
-                const ZEntityRef s_Ref = s_Entry.m_entityRef;
+            const ItemList s_Items = WorldItems();
+            for (auto* it = s_Items.begin; it && it != s_Items.end; ++it) {
+                const ZEntityRef s_Ref = it->m_entityRef;
                 if (!s_Ref || !s_Ref.GetEntity() || s_Ref == s_HeldRef)
                     continue;
                 auto* s_Item = s_Ref.QueryInterface<ZHM5Item>();
-                if (!s_Item || s_Item->m_pOwner != s_Player.m_entityRef || !s_Item->m_pItemConfigDescriptor ||
+                if (!s_Item || !s_Owner.Has(s_Item->m_pOwner) || !s_Item->m_pItemConfigDescriptor ||
                     s_Item->m_pItemConfigDescriptor->m_ItemConfig.m_ItemSize != eItemSize::ITEMSIZE_LARGE ||
                     !s_Item->m_rGeomentity.m_entityRef ||
                     !s_Item->m_rGeomentity.m_entityRef.GetProperty<bool>("m_bVisible").Get())
@@ -3102,7 +3166,7 @@ std::string SdkWorld::HeldItemsTest() const {
     int s_Count = 0;
 
     ForEachSceneItem([&](uint64_t p_Id, ZHM5Item* p_Item, const ZEntityRef& p_Ref) {
-        if (p_Item->m_pOwner != s_Player.m_entityRef)
+        if (!Owner47().Has(p_Item->m_pOwner))
             return;
 
         const auto* s_Spatial = p_Ref.QueryInterface<ZSpatialEntity>();
@@ -3326,7 +3390,7 @@ std::string SdkWorld::StandInItemTest(const std::string& p_Arg) {
         s_What.clear();
 
         ForEachSceneItem([&](uint64_t, ZHM5Item* p_Item, const ZEntityRef&) {
-            if (s_What.empty() && s_Player && p_Item->m_pOwner == s_Player.m_entityRef && p_Item->m_pItemConfigDescriptor)
+            if (s_What.empty() && s_Player && Owner47().Has(p_Item->m_pOwner) && p_Item->m_pItemConfigDescriptor)
                 s_What = p_Item->m_pItemConfigDescriptor->m_ItemID.ToString().c_str();
         });
     }

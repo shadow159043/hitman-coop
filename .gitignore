@@ -1,5 +1,6 @@
 /_deps/
 /_deps-sdk420/
+/_deps-sdk421/
 /_localtest/
 /tools/local-smoke-test.ps1
 /tools/steam-smoke-test.ps1

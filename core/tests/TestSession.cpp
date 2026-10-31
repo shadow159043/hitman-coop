@@ -445,6 +445,30 @@ TEST(Session_NpcsAreSharedByOwner) {
     CHECK_MSG(s_Worst < 1.0f, "worst disagreement %.2f m", s_Worst);
 }
 
+TEST(Session_Upstream0131_ClientChaseOverridesNearbyHostOwner) {
+    Duo d(171);
+    d.HostLoads(c_Miami, 10);
+    d.ClientLoads(c_Miami, 10, 0.f);
+    const Vec3 near = FakeWorld::Center(0x1000);
+    d.hostWorld.player.pos = near;
+    d.clientWorld.player.pos = near; // usually owned by the host
+    d.Start();
+    REQUIRE(d.StepUntilSynced(3.0));
+    d.Step(1.0);
+    CHECK(!d.hostWorld.puppets.count(0x1000));
+    CHECK(d.clientWorld.puppets.count(0x1000));
+    // Original 0.13.1: guards arresting or fighting the client's 47
+    // must be managed on the client's own PC, regardless of proximity.
+    d.clientWorld.alerts = { {0x1000, 6} };
+    d.Step(2.0);
+    CHECK(d.hostWorld.puppets.count(0x1000));
+    CHECK(!d.clientWorld.puppets.count(0x1000));
+    d.clientWorld.alerts.clear();
+    d.Step(4.0); // 2s retention expires; ownership can return to host
+    CHECK(!d.hostWorld.puppets.count(0x1000));
+    CHECK(d.clientWorld.puppets.count(0x1000));
+}
+
 TEST(Session_NpcOwnershipFollowsThePlayers) {
     Duo d(33);
     d.HostLoads(c_Miami, 10);
