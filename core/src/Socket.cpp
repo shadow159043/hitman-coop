@@ -12,6 +12,8 @@ namespace coop {
 std::string Endpoint::ToString() const {
     if (IsRelay())
         return "relay peer " + std::to_string(relayPeer);
+    if (IsSteam())
+        return "Steam peer " + std::to_string(steamPeer);
 
     return std::to_string((ip >> 24) & 0xFF) + "." + std::to_string((ip >> 16) & 0xFF) + "." +
         std::to_string((ip >> 8) & 0xFF) + "." + std::to_string(ip & 0xFF) + ":" + std::to_string(port);

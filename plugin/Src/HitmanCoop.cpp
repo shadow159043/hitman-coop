@@ -1057,6 +1057,7 @@ void HitmanCoop::ProcessCommands(double p_Now) {
             m_Session->Leave(s_Command.kind == Command::Kind::Leave ? "Left the session" : "Starting a new session", p_Now);
 
         if (s_Command.kind == Command::Kind::Leave) {
+            m_SteamHostReady = false;
             m_World.Notify("You left the co-op session.");
             m_LastJoin.reset();
             m_Reconnecting = false;
@@ -1121,14 +1122,28 @@ void HitmanCoop::ProcessCommands(double p_Now) {
                     "Hosting, but the co-op server isn't available (" + s_ServerError + "). Friends can still join by IP address.");
             }
 
-            m_Session->Host(std::make_unique<coop::MultiSocket>(std::move(s_Udp), std::move(s_Relay)));
+            // Uses only HITMAN's initialized Steam App ID, never Spacewar.
+            // UDP and the existing relay remain available if Steam isn't initialized.
+            std::string s_SteamError;
+            auto s_Steam = SteamP2PSocket::Open(0, s_SteamError);
+            m_SteamHostReady = s_Steam != nullptr;
+            m_Session->Host(std::make_unique<coop::MultiSocket>(std::move(s_Udp), std::move(s_Relay), std::move(s_Steam)));
         }
         else {
             std::string s_Code;
             std::unique_ptr<coop::IDatagramSocket> s_Socket;
             coop::Endpoint s_Host;
 
-            if (coop::RelaySocket::NormalizeCode(s_Command.address, s_Code)) {
+            uint64_t s_SteamId = 0;
+            if (SteamP2PSocket::ParseAddress(s_Command.address, s_SteamId)) {
+                auto s_Steam = SteamP2PSocket::Open(s_SteamId, s_Error);
+                if (s_Steam) {
+                    s_Host = coop::Endpoint::Steam(s_SteamId);
+                    s_Socket = std::move(s_Steam);
+                    m_World.Notify("Connecting to Steam friend (experimental P2P)...");
+                }
+            }
+            else if (coop::RelaySocket::NormalizeCode(s_Command.address, s_Code)) {
                 if (!s_HaveServer) {
                     m_World.Notify(s_Command.relay.empty() ? "Can't use a join code: no co-op server is set (Settings)." :
                         "Can't reach the co-op server: " + s_ServerError);
@@ -1163,6 +1178,7 @@ void HitmanCoop::ProcessCommands(double p_Now) {
 void HitmanCoop::OnFrameUpdate(const SGameUpdateEvent& p_UpdateEvent) {
     std::lock_guard s_Lock(m_SessionMutex);
 
+    m_SteamInvite.Tick();
     const double s_Now = Now();
     const double s_FrameGap = m_LastFrame > 0.0 ? s_Now - m_LastFrame : 0.0;
     m_LastFrame = s_Now;

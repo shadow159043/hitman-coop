@@ -13,16 +13,19 @@ struct Endpoint {
     uint32_t ip = 0;
     uint16_t port = 0;
     uint32_t relayPeer = 0;
+    uint64_t steamPeer = 0; // SteamID64, never an App ID or a spoofed identity.
 
     bool IsRelay() const { return relayPeer != 0; }
+    bool IsSteam() const { return steamPeer != 0; }
 
     bool operator==(const Endpoint& p_Other) const {
-        return ip == p_Other.ip && port == p_Other.port && relayPeer == p_Other.relayPeer;
+        return ip == p_Other.ip && port == p_Other.port && relayPeer == p_Other.relayPeer && steamPeer == p_Other.steamPeer;
     }
 
     bool operator!=(const Endpoint& p_Other) const { return !(*this == p_Other); }
 
     static Endpoint Relay(uint32_t p_Peer) { return { 0, 0, p_Peer }; }
+    static Endpoint Steam(uint64_t p_Peer) { return { 0, 0, 0, p_Peer }; }
 
     std::string ToString() const;
 };
@@ -60,23 +63,24 @@ private:
 // Either may be null. A host listens on both, so friends can join with a code or by address.
 class MultiSocket final : public IDatagramSocket {
 public:
-    MultiSocket(std::unique_ptr<IDatagramSocket> p_Udp, std::unique_ptr<IDatagramSocket> p_Relay) :
-        m_Udp(std::move(p_Udp)), m_Relay(std::move(p_Relay)) {}
+    MultiSocket(std::unique_ptr<IDatagramSocket> p_Udp, std::unique_ptr<IDatagramSocket> p_Relay,
+                std::unique_ptr<IDatagramSocket> p_Steam = nullptr) :
+        m_Udp(std::move(p_Udp)), m_Relay(std::move(p_Relay)), m_Steam(std::move(p_Steam)) {}
 
     bool SendTo(const Endpoint& p_To, const uint8_t* p_Data, size_t p_Size) override {
-        IDatagramSocket* s_Socket = p_To.IsRelay() ? m_Relay.get() : m_Udp.get();
+        IDatagramSocket* s_Socket = p_To.IsSteam() ? m_Steam.get() :
+            (p_To.IsRelay() ? m_Relay.get() : m_Udp.get());
         return s_Socket && s_Socket->SendTo(p_To, p_Data, p_Size);
     }
 
     int RecvFrom(Endpoint& p_From, uint8_t* p_Buffer, size_t p_Capacity) override {
-        // Alternate so a flood on one transport can't starve the other.
-        for (int i = 0; i < 2; ++i) {
-            m_RelayFirst = !m_RelayFirst;
-            IDatagramSocket* s_Socket = m_RelayFirst ? m_Relay.get() : m_Udp.get();
-
+        // Round-robin all three transports so none starves during a busy mission.
+        for (int i = 0; i < 3; ++i) {
+            m_Next = (m_Next + 1) % 3;
+            IDatagramSocket* s_Socket = m_Next == 0 ? m_Udp.get() :
+                (m_Next == 1 ? m_Relay.get() : m_Steam.get());
             if (s_Socket) {
                 const int s_Size = s_Socket->RecvFrom(p_From, p_Buffer, p_Capacity);
-
                 if (s_Size >= 0)
                     return s_Size;
             }
@@ -88,7 +92,8 @@ public:
 private:
     std::unique_ptr<IDatagramSocket> m_Udp;
     std::unique_ptr<IDatagramSocket> m_Relay;
-    bool m_RelayFirst = false;
+    std::unique_ptr<IDatagramSocket> m_Steam;
+    int m_Next = 0;
 };
 
 // Resolves "host", "host:port", or "a.b.c.d:port". Uses p_DefaultPort when no port is given.

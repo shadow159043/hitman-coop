@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.20)
+project(HitmanCoopSteamProbeTests LANGUAGES CXX)
+add_executable(steam_probe_tests SteamProbeTests.cpp ../../plugin/Src/SteamInvite.cpp ../../plugin/Src/SteamP2P.cpp ../../core/src/Socket.cpp)
+target_include_directories(steam_probe_tests PRIVATE ../../plugin/Src ../../core/include)
+target_compile_features(steam_probe_tests PRIVATE cxx_std_20)
+target_link_libraries(steam_probe_tests PRIVATE ws2_32)

@@ -733,8 +733,13 @@ void HitmanCoop::DrawHeader(const coop::SessionStatus& p_Status, bool p_InMissio
 void HitmanCoop::DrawPlayTab(const coop::SessionStatus& p_Status, bool p_InMission, const std::optional<coop::RelayState>& p_Relay) {
     const bool s_Active = p_Status.role != coop::SessionRole::None;
     const Palette s_Palette = Colours(m_ColourBlind);
-
     if (!s_Active) {
+        if (auto s_Invite = m_SteamInvite.TakeJoin()) {
+            strncpy_s(m_AddressBuffer, s_Invite->address.c_str(), _TRUNCATE);
+            strncpy_s(m_JoinRoomCodeBuffer, s_Invite->room.c_str(), _TRUNCATE);
+            m_JoinPasswordBuffer[0] = '\0'; // A Steam invite never includes a secret password.
+            m_SteamInviteReceived = true;
+        }
         if (!m_RoomCodeBuffer[0]) {
             static constexpr char c_Alphabet[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
             std::random_device s_Random;
@@ -794,7 +799,7 @@ void HitmanCoop::DrawPlayTab(const coop::SessionStatus& p_Status, bool p_InMissi
             SectionTitle(ICON_MD_LOGIN " Join a friend");
             ImGui::TextDisabled("Host address or relay code");
             ImGui::SetNextItemWidth(-FLT_MIN);
-            ImGui::InputTextWithHint("##HitmanCoopAddress", "IP (e.g. 100.x.x.x:47047) or join code", m_AddressBuffer, sizeof(m_AddressBuffer),
+            ImGui::InputTextWithHint("##HitmanCoopAddress", "Steam peer, IP/Tailscale or relay code", m_AddressBuffer, sizeof(m_AddressBuffer),
                 m_Streamer ? ImGuiInputTextFlags_Password : 0);
 
             if (ImGui::Button(ICON_MD_CONTENT_PASTE " Paste address / invite")) {
@@ -813,12 +818,13 @@ void HitmanCoop::DrawPlayTab(const coop::SessionStatus& p_Status, bool p_InMissi
                             s_Value.pop_back();
                         return s_Value;
                     };
+                    const std::string s_Steam = s_Field("Steam peer:");
                     const std::string s_Tailscale = s_Field("Tailscale IP:");
                     const std::string s_Lan = s_Field("Same-network IP:");
                     const std::string s_Relay = s_Field("Relay join code:");
-                    if (!s_Tailscale.empty() || !s_Lan.empty() || !s_Relay.empty()) {
-                        std::string s_Address = !s_Tailscale.empty() ? s_Tailscale :
-                            (!s_Lan.empty() ? s_Lan : s_Relay);
+                    if (!s_Steam.empty() || !s_Tailscale.empty() || !s_Lan.empty() || !s_Relay.empty()) {
+                        std::string s_Address = !s_Steam.empty() ? s_Steam :
+                            (!s_Tailscale.empty() ? s_Tailscale : (!s_Lan.empty() ? s_Lan : s_Relay));
                         if (const auto s_Note = s_Address.find(" ("); s_Note != std::string::npos)
                             s_Address.resize(s_Note);
                         strncpy_s(m_AddressBuffer, s_Address.c_str(), _TRUNCATE);
@@ -844,7 +850,9 @@ void HitmanCoop::DrawPlayTab(const coop::SessionStatus& p_Status, bool p_InMissi
             ImGui::TextDisabled("Password (only if required)");
             ImGui::SetNextItemWidth(-FLT_MIN);
             ImGui::InputTextWithHint("##ArturJoinPassword", "Enter room password (optional)", m_JoinPasswordBuffer, sizeof(m_JoinPasswordBuffer), ImGuiInputTextFlags_Password);
-            ImGui::TextDisabled("Direct rooms need the host IP and room code.");
+            if (m_SteamInviteReceived)
+                ImGui::TextColored(c_Gold, "Steam invite received. Check the address and room code, add a password if required, then JOIN.");
+            ImGui::TextDisabled("Join by Steam, IP/Tailscale, or relay code; room code is required.");
             if (m_AddressBuffer[0] == '\0' || m_JoinRoomCodeBuffer[0] == '\0')
                 ImGui::TextDisabled("Enter the host address and room code to join.");
             ImGui::BeginDisabled(m_AddressBuffer[0] == '\0' || m_JoinRoomCodeBuffer[0] == '\0');
@@ -855,6 +863,7 @@ void HitmanCoop::DrawPlayTab(const coop::SessionStatus& p_Status, bool p_InMissi
                 s_Join.roomCode = m_JoinRoomCodeBuffer;
                 s_Join.roomPassword = m_JoinPasswordBuffer;
                 PushCommand(s_Join);
+                m_SteamInviteReceived = false;
             }
             ImGui::EndDisabled();
 
@@ -1053,12 +1062,44 @@ void HitmanCoop::DrawPlayTab(const coop::SessionStatus& p_Status, bool p_InMissi
     // The host's share sheet stays directly underneath Leave session while the room is open.
     if (p_Status.role == coop::SessionRole::Host) {
         ImGui::Spacing();
+        SectionTitle("Steam friends invite (experimental)");
+        if (m_SteamInvite.Available()) {
+            if (ImGui::Button("Invite Steam friend...")) {
+                // Try the Steam peer routing path first, with existing IP and relay as fallback.
+                const uint64_t s_SteamId = m_SteamHostReady ? m_SteamInvite.LocalSteamId() : 0;
+                const std::string s_Address = s_SteamId ? "steam:" + std::to_string(s_SteamId) :
+                    p_Relay && p_Relay->phase == coop::RelayState::Phase::Ready ?
+                    p_Relay->code : (!m_TailscaleAddress.empty() ?
+                    m_TailscaleAddress + ":" + std::to_string(m_ActiveHostPort) :
+                    m_LanAddress.empty() ? std::string() :
+                    m_LanAddress + ":" + std::to_string(m_ActiveHostPort));
+                std::string s_Error;
+                if (!m_SteamInvite.OpenInviteDialog(s_Address, m_ActiveRoomCode, s_Error))
+                    m_SteamInviteError = s_Error;
+                else
+                    m_SteamInviteError.clear();
+            }
+            if (!m_SteamInviteError.empty())
+                ImGui::TextColored(s_Palette.bad, "%s", m_SteamInviteError.c_str());
+            ImGui::TextDisabled(m_SteamHostReady ?
+                "Steam P2P is experimental; if it fails, join via Tailscale/IP instead." :
+                "Steam invites prefill IP/room code; Tailscale/LAN or a shared relay is still needed.");
+            if (!m_ActiveRoomPassword.empty())
+                ImGui::TextDisabled("Tell your friend the room password separately (never sent through Steam).");
+        } else {
+            ImGui::TextDisabled("Steam invite unavailable: %s", m_SteamInvite.Status().c_str());
+        }
+        ImGui::Spacing();
         SectionTitle(ICON_MD_INFO " Room details - share with your friend");
         if (!m_LanAddress.empty())
             ImGui::TextWrapped("Same Wi-Fi IP: %s", Hide(m_LanAddress).c_str());
         if (!m_TailscaleAddress.empty())
             ImGui::TextWrapped("Tailscale IP: %s", Hide(m_TailscaleAddress).c_str());
         ImGui::Text("UDP port: %d", m_ActiveHostPort);
+        const uint64_t s_HostSteamId = m_SteamHostReady ? m_SteamInvite.LocalSteamId() : 0;
+        if (s_HostSteamId)
+            ImGui::Text("Steam peer: %s", m_Streamer ? "(hidden)" :
+                ("steam:" + std::to_string(s_HostSteamId)).c_str());
         ImGui::TextColored(c_Gold, "Room code: %s", m_Streamer ? "(hidden in streamer mode)" : m_ActiveRoomCode.c_str());
         if (p_Relay && p_Relay->phase == coop::RelayState::Phase::Ready)
             ImGui::TextColored(c_Gold, "Relay join code: %s", m_Streamer ? "(hidden)" : p_Relay->code.c_str());
@@ -1080,13 +1121,14 @@ void HitmanCoop::DrawPlayTab(const coop::SessionStatus& p_Status, bool p_InMissi
         if (ImGui::Button(ICON_MD_CONTENT_COPY " Copy full invite")) {
             std::ostringstream s_Invite;
             s_Invite << "HITMAN Co-op by Artur - version " << c_ModVersion << "\n";
+            if (s_HostSteamId) s_Invite << "Steam peer: steam:" << s_HostSteamId << "\n";
             if (!m_TailscaleAddress.empty()) s_Invite << "Tailscale IP: " << m_TailscaleAddress << ':' << m_ActiveHostPort << "\n";
             if (!m_LanAddress.empty()) s_Invite << "Same-network IP: " << m_LanAddress << ':' << m_ActiveHostPort << "\n";
             if (p_Relay && p_Relay->phase == coop::RelayState::Phase::Ready)
                 s_Invite << "Relay join code: " << p_Relay->code << " (requires the same relay server)\n";
             s_Invite << "Room code: " << m_ActiveRoomCode << "\n";
             if (!m_ActiveRoomPassword.empty()) s_Invite << "Room password: " << m_ActiveRoomPassword << "\n";
-            s_Invite << "Open ~ > CO-OP > Play > Join a friend. Enter the IP or relay code, room code, and password (if set). Both players need HITMAN Co-op " << c_ModVersion << ".";
+            s_Invite << "Open ~ > CO-OP > Play > Join a friend. Try Steam peer first, then IP/relay as fallback; enter room code/password if needed. Both players need HITMAN Co-op " << c_ModVersion << ".";
             ImGui::SetClipboardText(s_Invite.str().c_str());
         }
         if (!m_ActiveRoomPassword.empty())

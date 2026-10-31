@@ -17,6 +17,8 @@
 class ZTemplateEntityFactory;
 
 #include "Hotkeys.h"
+#include "SteamInvite.h"
+#include "SteamP2P.h"
 #include "SdkWorld.h"
 #include "TestChannel.h"
 #include "coop/GameEvents.h"
@@ -172,6 +174,10 @@ private:
     // Game thread state. Hooks may run on other threads, so session access is serialized.
     std::recursive_mutex m_SessionMutex;
     SdkWorld m_World;
+    SteamInvite m_SteamInvite;
+    std::atomic<bool> m_SteamHostReady { false };
+    bool m_SteamInviteReceived = false;
+    std::string m_SteamInviteError;
     std::unique_ptr<coop::Session> m_Session;
     std::string m_GameVersion;
     std::string m_LanAddress;

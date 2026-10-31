@@ -5,7 +5,7 @@
 #include <string>
 
 // Words and numbers the game-thread code and the UI share.
-inline constexpr const char* c_ModVersion = "0.12.5";
+inline constexpr const char* c_ModVersion = "0.12.6";
 inline constexpr const char* c_Author = "Jordan Rodrigues"; // Original mod creator.
 inline constexpr const char* c_EditionBy = "Artur"; // Compatibility edition credit.
 
