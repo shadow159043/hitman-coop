@@ -269,9 +269,16 @@ bool SdkWorld::FindLocalDisguiseSource(const coop::OutfitDesc& p_Outfit, uint64_
     int s_Count = 0;
 
     for (const auto& [s_Id, s_Actor] : m_NpcsById) {
-        if (!s_Actor || s_Actor == m_PartnerActor || !(s_Actor->IsDead() || s_Actor->IsPacified()) ||
-            !s_Actor->m_rOutfit.m_pInterfaceRef ||
-            OutfitKitToRepositoryId(s_Actor->m_rOutfit.m_pInterfaceRef) != p_Outfit.repositoryId)
+        if (!s_Actor || s_Actor == m_PartnerActor ||
+            !(s_Actor->IsDead() || s_Actor->IsPacified() || g_Pacified.contains(s_Actor->m_sActorName.c_str())))
+            continue;
+
+        // The NPC's own outfit repository ID is sometimes populated even where its outfit-kit
+        // pointer doesn't resolve through the global outfit registry.
+        const bool s_KitMatch = s_Actor->m_rOutfit.m_pInterfaceRef &&
+            OutfitKitToRepositoryId(s_Actor->m_rOutfit.m_pInterfaceRef) == p_Outfit.repositoryId;
+        const bool s_RepoMatch = s_Actor->m_OutfitRepositoryID.ToString().c_str() == p_Outfit.repositoryId;
+        if (!s_KitMatch && !s_RepoMatch)
             continue;
 
         ZEntityRef s_Ref;
@@ -913,7 +920,10 @@ bool SdkWorld::GetLocalVictim(uint64_t& p_Id, coop::Transform& p_Xf, coop::Pose&
     if (PoseHook::TakeSourcePose(s_Fresh, 1))
         m_VictimBones = std::move(s_Fresh);
 
-    if (m_VictimBones.size() < 2)
+    const bool s_Dragging = m_LocalVictim->m_bIsBeingDragged;
+    // Ragdoll drag poses aren't always available from the animation hook. The transform
+    // still matters and can be sent without bones, rather than leaving the body at rest.
+    if (m_VictimBones.size() < 2 && !s_Dragging)
         return false;
 
     ZEntityRef s_Ref;
@@ -926,8 +936,12 @@ bool SdkWorld::GetLocalVictim(uint64_t& p_Id, coop::Transform& p_Xf, coop::Pose&
     p_Id = m_LocalVictimId;
     p_Xf = ToTransform(s_Spatial->GetObjectToWorldMatrix());
     p_Flags = (Dead(m_LocalVictim) ? 0 : coop::NpcFlag_Alive) |
-        (Pacified(m_LocalVictim) ? coop::NpcFlag_Pacified : 0);
-    BonesToPose(m_VictimBones, p_Pose);
+        (Pacified(m_LocalVictim) ? coop::NpcFlag_Pacified : 0) |
+        (s_Dragging ? coop::NpcFlag_Dragged : 0);
+    if (m_VictimBones.size() >= 2)
+        BonesToPose(m_VictimBones, p_Pose);
+    else
+        p_Pose = {};
     return true;
 }
 
@@ -1003,7 +1017,8 @@ void SdkWorld::ShowRemoteVictim(uint64_t p_Id, const coop::Transform& p_Xf, cons
             return;
         }
 
-        if (!m_RemoteVictimDragged && coop::Distance(m_RemoteVictimDownPos, p_Xf.pos) < 0.75f)
+        if (!m_RemoteVictimDragged && !(p_Flags & coop::NpcFlag_Dragged) &&
+            coop::Distance(m_RemoteVictimDownPos, p_Xf.pos) < 0.75f)
             return;
 
         m_RemoteVictimDragged = true;
@@ -1023,6 +1038,12 @@ void SdkWorld::ShowRemoteVictim(uint64_t p_Id, const coop::Transform& p_Xf, cons
 
     if (auto* s_Spatial = s_Ref.QueryInterface<ZSpatialEntity>(); s_Spatial && m_VictimTestApply != 1)
         s_Spatial->SetObjectToWorldMatrixFromEditor(ToMatrix(s_Xf));
+
+    if (p_Pose.rotations.empty()) {
+        // No captured drag bones on the sender. Keep the game-owned ragdoll/pose;
+        // the actor root transform above is still updated while the partner drags.
+        return;
+    }
 
     PoseToBones(p_Pose, m_RemoteVictimBones);
     void* s_Animator = AnimatorOf(s_Actor);
@@ -2500,7 +2521,13 @@ void ForEachSceneItem(F&& p_Do) {
 void SetItemShown(ZHM5Item* p_Item, bool p_Shown) {
     if (p_Item->m_rGeomentity.m_entityRef)
         p_Item->m_rGeomentity.m_entityRef.SetProperty("m_bVisible", p_Shown);
-
+    if (p_Item->m_pGeomEntity.m_entityRef &&
+        p_Item->m_pGeomEntity.m_entityRef != p_Item->m_rGeomentity.m_entityRef)
+        p_Item->m_pGeomEntity.m_entityRef.SetProperty("m_bVisible", p_Shown);
+    // The game can drive geometry visibility from this ZValueBool each frame.
+    // Changing the geometry alone may therefore only hide the item briefly.
+    if (p_Item->m_rItemVisible.m_entityRef)
+        p_Item->m_rItemVisible.m_entityRef.SetProperty("m_bValue", p_Shown);
     if (p_Item->m_rItemPickupEnabled.m_entityRef)
         p_Item->m_rItemPickupEnabled.m_entityRef.SetProperty("m_bValue", p_Shown);
 }
@@ -2532,6 +2559,13 @@ void SdkWorld::CollectItemChanges(std::vector<coop::ItemChange>& p_Out) {
         const coop::ItemChange s_Event = s_It->second;
         s_It = m_PendingPeerItems.erase(s_It);
         ApplyPeerItem(s_Event);
+    }
+    // Visibility is driven by the item state and sometimes re-enabled by scene scripts.
+    // Reassert a peer's held-item lock while the session is active.
+    for (const uint64_t s_Id : m_PeerHeldItems) {
+        ZEntityRef s_Ref;
+        if (ZHM5Item* s_Item = FindItem(s_Id, s_Ref))
+            SetItemShown(s_Item, false);
     }
     CollectDoorChanges(p_Out);
     CollectBodyChanges(p_Out);

@@ -16,7 +16,8 @@ namespace coop {
 // 11: the host's mod version in Welcome, a player's colour and "away" in their status.
 // 13: optional host room code and password checked before a peer can join.
 // 14: optional source NPC ID on outfit changes for shared corpse-disguise availability.
-constexpr uint32_t kProtocolVersion = 14;
+// 15: victim stream explicitly marks dragging and can contain transforms without animation bones.
+constexpr uint32_t kProtocolVersion = 15;
 
 constexpr uint16_t kDefaultPort = 47047;
 constexpr size_t kMaxPacketSize = 1200;
@@ -107,6 +108,7 @@ struct OutfitDesc {
 enum NpcFlags : uint8_t {
     NpcFlag_Alive = 1 << 0,
     NpcFlag_Pacified = 1 << 1,
+    NpcFlag_Dragged = 1 << 2, // Only used in victim pose stream; tells receiver to move a dragged corpse.
 };
 
 struct NpcState {

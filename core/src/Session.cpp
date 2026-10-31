@@ -463,7 +463,7 @@ void Session::Tick(double p_Now, float p_Dt) {
         UpdateLink(p_Now);
         UpdatePlayerState(p_Now);
         UpdateScene();
-        UpdateOutfit();
+        UpdateOutfit(p_Now);
         UpdateSkeleton(p_Now);
         UpdateAvatar(p_Now);
         UpdateItems();
@@ -749,11 +749,13 @@ void Session::HandleMessage(const Message& p_Msg, double p_Now) {
             if (!Decode(p_Msg.payload, s_Outfit))
                 break;
 
+            const bool s_Changed = !m_HasRemoteOutfit || s_Outfit.outfit != m_RemoteOutfit;
             m_RemoteOutfit = s_Outfit.outfit;
             m_HasRemoteOutfit = true;
 
             if (IsSynced()) {
-                m_World.SetRemoteOutfit(m_RemoteOutfit);
+                if (s_Changed)
+                    m_World.SetRemoteOutfit(m_RemoteOutfit);
                 if (s_Outfit.sourceNpcId != 0)
                     m_World.BlockPeerDisguise(s_Outfit.sourceNpcId);
             }
@@ -1066,6 +1068,7 @@ void Session::UpdateScene() {
 void Session::OnSyncChanged(bool p_Synced) {
     if (p_Synced) {
         m_HasLocalOutfitSent = false;
+        m_OutfitSourceRetryUntil = -1.0;
         m_HasLocalSkeletonSent = false;
         m_NextAvatarSend = 0.0;
         m_NextNpcSend = 0.0;
@@ -1082,6 +1085,7 @@ void Session::OnSyncChanged(bool p_Synced) {
         m_RemoteAvatarShown = false;
     }
 
+    m_OutfitSourceRetryUntil = -1.0;
     m_World.ResetItems();
     m_World.ApplyPeerAlerts({});
     ReleasePuppets();
@@ -1100,7 +1104,7 @@ void Session::OnSyncChanged(bool p_Synced) {
     m_NpcSent.clear();
 }
 
-void Session::UpdateOutfit() {
+void Session::UpdateOutfit(double p_Now) {
     if (!IsSynced())
         return;
 
@@ -1110,14 +1114,25 @@ void Session::UpdateOutfit() {
         return;
 
     if (!m_HasLocalOutfitSent || s_Outfit != m_LastSentOutfit) {
+        const bool s_Changed = m_HasLocalOutfitSent && s_Outfit != m_LastSentOutfit;
         uint64_t s_SourceNpc = 0;
-        // Only assign a body on an actual outfit change while already connected. A suit
-        // worn on session start must not accidentally consume a nearby corpse's disguise.
-        if (m_HasLocalOutfitSent && s_Outfit != m_LastSentOutfit)
-            m_World.FindLocalDisguiseSource(s_Outfit, s_SourceNpc);
+        // A new outfit may reach the game before the source NPC is flagged as knocked out.
+        // Never guess on session start; retry a short time after a real outfit switch.
+        m_OutfitSourceRetryUntil = s_Changed ? p_Now + 2.5 : -1.0;
+        if (s_Changed && m_World.FindLocalDisguiseSource(s_Outfit, s_SourceNpc))
+            m_OutfitSourceRetryUntil = -1.0;
         m_Conn->SendReliable(MsgType::Outfit, Encode(MsgOutfit { s_Outfit, s_SourceNpc }));
         m_LastSentOutfit = s_Outfit;
         m_HasLocalOutfitSent = true;
+    } else if (m_OutfitSourceRetryUntil >= p_Now) {
+        uint64_t s_SourceNpc = 0;
+        if (m_World.FindLocalDisguiseSource(s_Outfit, s_SourceNpc) && s_SourceNpc != 0) {
+            // Second outfit packet only resolves the source body, not a second outfit change.
+            m_Conn->SendReliable(MsgType::Outfit, Encode(MsgOutfit { s_Outfit, s_SourceNpc }));
+            m_OutfitSourceRetryUntil = -1.0;
+        }
+    } else {
+        m_OutfitSourceRetryUntil = -1.0;
     }
 }
 

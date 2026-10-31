@@ -97,7 +97,7 @@ public:
 
 struct SessionConfig {
     std::string playerName = "Agent";
-    std::string modVersion = "0.12.3";
+    std::string modVersion = "0.12.4";
     std::string gameVersion = "unknown";
     std::string roomCode;    // Host's expected code; client's code to present at handshake.
     std::string roomPassword; // Optional host password / client entry (not saved to configuration).
@@ -235,7 +235,7 @@ private:
 
     void UpdateScene();
     void UpdateAvatar(double p_Now);
-    void UpdateOutfit();
+    void UpdateOutfit(double p_Now);
     void UpdateSkeleton(double p_Now);
     void UpdateNpcsHost(double p_Now);
     void UpdateNpcsClient(float p_Dt);
@@ -390,6 +390,7 @@ private:
     bool m_RemoteAvatarShown = false;
     bool m_HasLocalOutfitSent = false;
     OutfitDesc m_LastSentOutfit;
+    double m_OutfitSourceRetryUntil = -1.0; // Some NPCs are marked down a moment after the outfit changes.
     bool m_HasRemoteOutfit = false;
     std::vector<int16_t> m_LastSentSkeleton;
     bool m_HasLocalSkeletonSent = false;

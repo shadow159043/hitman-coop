@@ -84,7 +84,7 @@ public:
         ++remoteOutfitChanges;
     }
     bool FindLocalDisguiseSource(const coop::OutfitDesc&, uint64_t& p_NpcId) const override {
-        if (!localDisguiseSourceId) return false;
+        if (!localDisguiseSourceId || !disguiseSourceReady) return false;
         p_NpcId = localDisguiseSourceId;
         return true;
     }
@@ -252,6 +252,7 @@ public:
     std::vector<coop::ItemChange> peerItems;   // the partner's, as applied
     int itemResets = 0;
     uint64_t localDisguiseSourceId = 0;
+    bool disguiseSourceReady = true;
     std::vector<uint64_t> blockedDisguises;
     std::vector<coop::NpcAlert> alerts;     // ours
     std::set<uint64_t> puppets;             // NPCs the partner runs (AI off here)

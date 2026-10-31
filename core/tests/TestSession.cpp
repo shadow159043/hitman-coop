@@ -331,6 +331,13 @@ TEST(Session_VictimStreamsAndReleases) {
     d.clientWorld.victim.flags = NpcFlag_Alive | NpcFlag_Pacified;
     d.Step(0.5);
     CHECK(d.hostWorld.remoteVictim.flags == (NpcFlag_Alive | NpcFlag_Pacified));
+    // When a corpse is dragged, animation bones may be missing. Transforms still reach the peer.
+    d.clientWorld.victim.pose.rotations.clear();
+    d.clientWorld.victim.flags = NpcFlag_Alive | NpcFlag_Pacified | NpcFlag_Dragged;
+    d.clientWorld.victim.xf.pos = { 4.f, 1.f, 0.f };
+    d.Step(0.4);
+    CHECK((d.hostWorld.remoteVictim.flags & NpcFlag_Dragged) != 0);
+    CHECK(Distance(d.hostWorld.remoteVictim.xf.pos, d.clientWorld.victim.xf.pos) < 0.01f);
     d.clientWorld.victim.id = 0;
     d.Step(1.0);
     CHECK(d.hostWorld.remoteVictim.id == 0);
@@ -360,6 +367,26 @@ TEST(Session_OutfitChangesPropagate) {
     CHECK(d.hostWorld.remoteOutfit == d.clientWorld.outfit);
     REQUIRE(d.hostWorld.blockedDisguises.size() == 1);
     CHECK(d.hostWorld.blockedDisguises[0] == 0x1008);
+}
+
+TEST(Session_LateDisguiseSourceIsSentWithoutRefreshingTheOutfit) {
+    Duo d(77);
+    d.HostLoads(c_Miami, 0);
+    d.ClientLoads(c_Miami, 0, 0.f);
+    d.Start();
+    REQUIRE(d.StepUntilSynced(2.0));
+    d.Step(0.5);
+    d.hostWorld.localDisguiseSourceId = 0x1007;
+    d.hostWorld.disguiseSourceReady = false;
+    d.hostWorld.outfit = { "11111111-aaaa-4444-8888-abcdef012345", 0, 1 };
+    d.Step(0.4);
+    REQUIRE(d.clientWorld.blockedDisguises.empty());
+    const int s_AppliedOutfits = d.clientWorld.remoteOutfitChanges;
+    d.hostWorld.disguiseSourceReady = true; // e.g. downed NPC actor appears after outfit event.
+    d.Step(0.4);
+    REQUIRE(d.clientWorld.blockedDisguises.size() == 1);
+    CHECK(d.clientWorld.blockedDisguises[0] == 0x1007);
+    CHECK(d.clientWorld.remoteOutfitChanges == s_AppliedOutfits);
 }
 
 TEST(Session_HostKillReplicatesToClient) {
