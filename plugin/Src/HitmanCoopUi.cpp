@@ -678,7 +678,7 @@ void HitmanCoop::DrawHeader(const coop::SessionStatus& p_Status, bool p_InMissio
     ImGui::PopFont();
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(c_Gold, ICON_MD_STAR " by %s", c_Author);
+    ImGui::TextColored(c_Gold, ICON_MD_STAR " by %s", c_EditionBy);
     ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - ImGui::CalcTextSize("v0.00.00").x);
     ImGui::TextDisabled("v%s", c_ModVersion);
 
@@ -1376,7 +1376,8 @@ void HitmanCoop::DrawAboutTab(const coop::SessionStatus& p_Status) {
     ImGui::PushFont(SDK()->GetImGuiBlackFont(), ImGui::GetStyle().FontSizeBase * m_WindowScale * 1.3f);
     ImGui::TextColored(c_Red, "HITMAN CO-OP %s", c_ModVersion);
     ImGui::PopFont();
-    ImGui::TextColored(c_Gold, ICON_MD_STAR " Created by %s", c_Author);
+    ImGui::TextColored(c_Gold, ICON_MD_STAR " by %s", c_EditionBy);
+    ImGui::TextDisabled("Original co-op created by %s", c_Author);
     ImGui::TextDisabled("Protocol %u, game %s", coop::kProtocolVersion, m_GameVersion.c_str());
     ImGui::Spacing();
     ImGui::TextWrapped("A fan-made two-player co-op mod for HITMAN World of Assassination. It isn't made, endorsed or supported by "
@@ -1454,7 +1455,7 @@ void HitmanCoop::DrawWindow(const coop::SessionStatus& p_Status, bool p_InMissio
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.f, 12.f));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.f, 6.f));
 
-    if (ImGui::Begin(ICON_MD_PEOPLE " HITMAN Co-op###HitmanCoopMain", &m_ShowWindow, ImGuiWindowFlags_NoCollapse)) {
+    if (ImGui::Begin(ICON_MD_PEOPLE " HITMAN Co-op - by Artur###HitmanCoopMain", &m_ShowWindow, ImGuiWindowFlags_NoCollapse)) {
         // Back on screen if it was moved (or saved) off it.
         ImVec2 s_Pos = ImGui::GetWindowPos();
         const ImVec2 s_Size = ImGui::GetWindowSize();

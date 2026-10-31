@@ -8,22 +8,28 @@ $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $R2 = Join-Path $Root "_dist\HitmanCoop-0.12.1-3290-sdk420-EXPERIMENTAL-R2"
 $NetTest = Join-Path $Root "_build-sdk420\core\RelWithDebInfo\HitmanCoop-NetTest.exe"
+$NewDll = Join-Path $Root "_build-sdk420\plugin\RelWithDebInfo\HitmanCoop.dll"
 $Stage = Join-Path $OutDir "_artur-r2-stage"
 $Payload = Join-Path $OutDir "_artur-r2-payload.zip"
-$Setup = Join-Path $OutDir "HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.exe"
+$Setup = Join-Path $OutDir "HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.1.exe"
 $Csc = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 $Fx = Split-Path $Csc
-foreach ($f in @((Join-Path $R2 "Retail\mods\HitmanCoop.dll"), (Join-Path $R2 "Retail\ZHMModSDK.dll"), $NetTest, $Csc)) {
+foreach ($f in @((Join-Path $R2 "Retail\mods\HitmanCoop.dll"), (Join-Path $R2 "Retail\ZHMModSDK.dll"), $NetTest, $NewDll, $Csc)) {
     if (!(Test-Path $f)) { throw "Required R2 file missing: $f" }
 }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 Remove-Item $Stage,$Payload -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force (Join-Path $Stage "files\mods") | Out-Null
 Copy-Item (Join-Path $R2 "Retail\*") (Join-Path $Stage "files") -Recurse -Force
+# Use the freshly built in-game UI DLL; do not accidentally repackage the old R2 UI.
+Copy-Item $NewDll (Join-Path $Stage "files\mods\HitmanCoop.dll") -Force
 Copy-Item $NetTest (Join-Path $Stage "Test-Connection.exe")
 Copy-Item (Join-Path $R2 "HITMAN-COOP-LICENSE.txt") (Join-Path $Stage "LICENSE.txt")
 Copy-Item (Join-Path $R2 "SDK-LICENSE.txt") (Join-Path $Stage "SDK-LICENSE.txt")
 Copy-Item (Join-Path $R2 "READ-ME-FIRST.txt") (Join-Path $Stage "READ-ME-FIRST.txt")
+$ReadmeIntro = "R2.1: In-game CO-OP header/window/About now say by Artur; original creator remains credited. Installer accepts an installed but disabled Assassin Rivals 2 DLL. Same R2 multiplayer code and protocol."
+$ReadmeOriginal = Get-Content (Join-Path $Stage "READ-ME-FIRST.txt") -Raw
+Set-Content (Join-Path $Stage "READ-ME-FIRST.txt") -Value ($ReadmeIntro + [Environment]::NewLine + $ReadmeOriginal) -Encoding UTF8
 Copy-Item (Join-Path $R2 "NATIVE-AUDIT.md") (Join-Path $Stage "NATIVE-AUDIT.md")
 
 # Installer from the original source, with version and mod-conflict guards for this fork only.
@@ -32,13 +38,36 @@ $Installer = $Installer.Replace('$TestedGame = "3.280.0"', '$TestedGame = "3.290
 $Installer = [regex]::Replace($Installer,
     '(?m)^\s*Say "Note: this build of HITMAN Co-op was tested on game version.*$',
     '        throw "This R2 edition requires HITMAN 3.290.1.x; detected $($Info.Version). No files were changed."')
-$Guard = '    if (Test-Path (Join-Path $Retail "mods\AssassinRivals2.dll")) { throw "Disable Assassin Rivals 2 before installing this experimental Co-op build." }'
+$Guard = @'
+    # SDK only loads enabled mod sections from Retail/mods.ini. A disabled mod can keep its DLL.
+    $ModsIni = Join-Path $Retail "mods.ini"
+    if (Test-Path -LiteralPath $ModsIni) {
+        $RivalsEnabled = @(Get-Content -LiteralPath $ModsIni | Where-Object {
+            $_ -match '^\s*\[AssassinRivals2\]\s*(?:[;#].*)?$'
+        }).Count -gt 0
+        if ($RivalsEnabled) {
+            throw "Assassin Rivals 2 is enabled in Retail/mods.ini. Disable it in the SDK Mods menu, save, and close HITMAN before installing Co-op."
+        }
+    }
+'@
 $Installer = $Installer.Replace('    $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"', $Guard + "`r`n    " + '$Stamp = Get-Date -Format "yyyyMMdd-HHmmss"')
-if ($Installer -notmatch 'requires HITMAN 3.290.1' -or $Installer -notmatch 'Disable Assassin Rivals 2') {
+if ($Installer -notmatch 'requires HITMAN 3.290.1' -or $Installer -notmatch 'Assassin Rivals 2 is enabled in Retail/mods.ini') {
     throw "Packaging safety modifications did not apply."
 }
 Set-Content -Path (Join-Path $Stage "installer.ps1") -Value $Installer -Encoding UTF8
 
+$R21 = Join-Path $OutDir "HitmanCoop-0.12.1-3290-sdk420-EXPERIMENTAL-R2.1"
+$Zip21 = "$R21.zip"
+Remove-Item $R21,$Zip21 -Recurse -Force -ErrorAction SilentlyContinue
+Copy-Item -Path $R2 -Destination $R21 -Recurse
+Copy-Item $NewDll (Join-Path $R21 "Retail\mods\HitmanCoop.dll") -Force
+Set-Content (Join-Path $R21 "READ-ME-FIRST.txt") -Value ($ReadmeIntro + [Environment]::NewLine + (Get-Content (Join-Path $R2 "READ-ME-FIRST.txt") -Raw)) -Encoding UTF8
+$checks = @(Get-ChildItem $R21 -Recurse -File | Where-Object { $_.Name -ne "SHA256SUMS.txt" } | ForEach-Object { "{0}  {1}" -f (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant(), $_.FullName.Substring($R21.Length+1).Replace('\','/') })
+Set-Content (Join-Path $R21 "SHA256SUMS.txt") -Value $checks -Encoding ascii
+Compress-Archive -Path $R21 -DestinationPath $Zip21 -CompressionLevel Optimal -Force
+$ZipHash = (Get-FileHash -Algorithm SHA256 $Zip21).Hash.ToLowerInvariant()
+Set-Content "$Zip21.sha256" "$ZipHash  $(Split-Path -Leaf $Zip21)"
+Write-Host "R2.1 ZIP: $Zip21"
 Compress-Archive -Path (Join-Path $Stage "*") -DestinationPath $Payload -CompressionLevel Optimal -Force
 $Icon = Join-Path $Root "installer\setup\setup.ico"
 $Manifest = Join-Path $Root "installer\setup\setup.manifest"
