@@ -9,12 +9,25 @@
 #include "coop/Interpolation.h"
 #include "coop/FriendlyFire.h"
 #include "coop/RuntimeCompatibility.h"
+#include "coop/BodySync.h"
 #include "coop/Duel.h"
 #include "coop/DuelMotion.h"
 #include "coop/DuelSkeleton.h"
 #include "coop/Protocol.h"
 
 using namespace coop;
+
+TEST(BodySync_DragReleaseTriggersSingleMovementNotPhysicsDrift) {
+    CHECK(body_sync::ShouldSendMoved(true, true, true, 0.8f, 0.55));
+    CHECK(body_sync::ShouldSendMoved(true, true, true, 0.41f, 0.36));
+    CHECK(!body_sync::ShouldSendMoved(false, true, true, 10.f, 2.0)); // settled ragdoll
+    CHECK(!body_sync::ShouldSendMoved(true, false, true, 3.f, 1.0)); // still dragging
+    CHECK(!body_sync::ShouldSendMoved(true, true, false, 3.f, 1.0)); // still sliding
+    CHECK(!body_sync::ShouldSendMoved(true, true, true, .39f, 1.0)); // tiny bump
+    CHECK(!body_sync::ShouldSendMoved(true, true, true, 2.f, .2)); // wait for release
+    CHECK(!body_sync::ShouldSendMoved(true, true, true,
+        std::numeric_limits<float>::infinity(), 1.0)); // bad transform
+}
 
 TEST(RuntimeCompatibility_Sdk421GuardIsExactAndRejectsOthers) {
     CHECK(runtime_compat::Supported("3.290.1.0", "4.2.1.0"));

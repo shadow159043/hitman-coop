@@ -152,6 +152,7 @@ void HitmanCoop::Init() {
     Hooks::ZEntitySceneContext_LoadScene->AddDetour(this, &HitmanCoop::OnLoadScene);
     Hooks::ZEntitySceneContext_ClearScene->AddDetour(this, &HitmanCoop::OnClearScene);
     Hooks::ZActor_YouGotHit->AddDetour(this, &HitmanCoop::OnActorHit);
+    Hooks::ZActor_SetOutfit->AddDetour(this, &HitmanCoop::OnActorSetOutfit);
     Hooks::ZKnowledge_SetGameTension->AddDetour(this, &HitmanCoop::OnSetGameTension);
     Hooks::ZAchievementManagerSimple_OnEventSent->AddDetour(this, &HitmanCoop::OnEventSent);
     Hooks::ZLevelManager_SetGameState->AddDetour(this, &HitmanCoop::OnSetGameState);
@@ -684,6 +685,10 @@ bool HitmanCoop::ApplyFriendlyDamage(int p_Hits) {
 bool HitmanCoop::OnTeamEvent(const std::string& p_Name, const std::string& p_Json) {
     const double s_Now = Now();
     if (OnDuelEvent(p_Name, p_Json, s_Now)) return true;
+    if (p_Name == "Coop_BodyOutfit") {
+        m_World.ApplyPeerBodyOutfit(p_Json);
+        return true;
+    }
     const std::string& s_Partner = m_FrameStatus.peerName.empty() ? std::string("Your partner") : m_FrameStatus.peerName;
     const std::string s_ReadyKey = Hotkeys::Name(Hotkeys::Get(Hotkeys::Action::ReadyCheck));
     const std::string s_RegroupKey = Hotkeys::Name(Hotkeys::Get(Hotkeys::Action::Regroup));
@@ -1367,6 +1372,14 @@ void HitmanCoop::OnFrameUpdate(const SGameUpdateEvent& p_UpdateEvent) {
 
             m_Session.reset();
             m_World.NotifyAs(SdkWorld::ToastKind::Warning, "Co-op hit an internal error and stopped (your game is fine). Host or join again.");
+        }
+
+        // Native NPC outfit detours enqueue game-thread notices during a
+        // disguise change. Send only after the Session tick, never from inside
+        // a native detour or while applying a remote outfit.
+        for (const auto& [name, value] : m_World.TakeOutgoingEvents()) {
+            if (m_Session && m_Session->Synced())
+                m_Session->SendMissionEvent(name, value);
         }
 
         if (m_Session) {
@@ -2056,6 +2069,14 @@ DEFINE_PLUGIN_DETOUR(HitmanCoop, bool, OnActorHit, IBaseCharacter* th, const SHi
     }
 
     return HookResult<bool>(HookAction::Continue());
+}
+
+// Original upstream v0.13.2: mirror a stripped NPC's outfit change without
+// allowing 47's or partner stand-in's outfit to create a false body event.
+DEFINE_PLUGIN_DETOUR(HitmanCoop, void, OnActorSetOutfit, ZActor* th, TEntityRef<ZGlobalOutfitKit> p_Outfit,
+    int32_t p_Charset, int32_t p_Variation, bool p_Nude) {
+    m_World.OnActorOutfitSet(th, p_Outfit.m_pInterfaceRef, p_Charset, p_Variation, p_Nude);
+    return HookResult<void>(HookAction::Continue());
 }
 
 DEFINE_PLUGIN_DETOUR(HitmanCoop, void, OnSetGameTension, ZKnowledge* th, EGameTension p_Tension) {

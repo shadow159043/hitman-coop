@@ -1371,6 +1371,21 @@ TEST(Session_MissionEventsReachPeer) {
     CHECK(d.clientWorld.peerEvents.back() == "ContractEnd:{\"Value\":{}}");
 }
 
+TEST(Session_UpstreamBodyOutfitChangeRelaysOnReliableMissionChannel) {
+    Duo d(172);
+    d.HostLoads(c_Miami, 3);
+    d.ClientLoads(c_Miami, 3, 0.f);
+    d.Start();
+    REQUIRE(d.StepUntilSynced(4.0));
+    d.client.SendMissionEvent("Coop_BodyOutfit", "305419896 outfit-kit-id 0 0 1");
+    d.Step(.4);
+    REQUIRE(!d.hostWorld.peerEvents.empty());
+    CHECK(d.hostWorld.peerEvents.back() ==
+        "Coop_BodyOutfit:305419896 outfit-kit-id 0 0 1");
+    // Engine-side validation/re-dressing is inside the SDK plugin and
+    // still requires two-player game testing.
+}
+
 TEST(Session_ExperimentalFriendlyDamageEventRelaysOnReliableChannel) {
     Duo d(101);
     d.HostLoads(c_Miami, 3);

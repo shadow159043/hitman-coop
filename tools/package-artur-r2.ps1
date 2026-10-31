@@ -11,7 +11,7 @@ $NetTest = Join-Path $Root "_build-sdk421\core\RelWithDebInfo\HitmanCoop-NetTest
 $NewDll = Join-Path $Root "_build-sdk421\plugin\RelWithDebInfo\HitmanCoop.dll"
 $Stage = Join-Path $OutDir "_artur-r2-stage"
 $Payload = Join-Path $OutDir "_artur-r2-payload.zip"
-$Setup = Join-Path $OutDir "HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.15.1-SDK421-HOTFIX.exe"
+$Setup = Join-Path $OutDir "HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.16-BODY-ITEM-DISGUISE-SYNC-TEST.exe"
 $Csc = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 $Fx = Split-Path $Csc
 foreach ($f in @((Join-Path $R2 "Retail\mods\HitmanCoop.dll"), (Join-Path $R2 "Retail\ZHMModSDK.dll"), $NetTest, $NewDll, $Csc)) {
@@ -33,7 +33,7 @@ Copy-Item $NetTest (Join-Path $Stage "Test-Connection.exe")
 Copy-Item (Join-Path $R2 "HITMAN-COOP-LICENSE.txt") (Join-Path $Stage "LICENSE.txt")
 Copy-Item (Join-Path $R2 "SDK-LICENSE.txt") (Join-Path $Stage "SDK-LICENSE.txt")
 Copy-Item (Join-Path $R2 "READ-ME-FIRST.txt") (Join-Path $Stage "READ-ME-FIRST.txt")
-$ReadmeIntro = "R2.15.1 SDK 4.2.1 COMPATIBILITY HOTFIX / Artur Edition v0.12.15 protocol 16: fixes the R2.15 startup guard that incorrectly rejected the correct loaded ZHMModSDK 4.2.1.0 by still demanding 4.2.0.0. Exact supported runtime now HITMAN 3.290.1.0 plus SDK 4.2.1.0; fail-closed checks remain enabled. All R2.15 upstream item/guard/body fixes, R2.9 optimizations, R2.11 friendly fire, R2.13 fistfights and R2.14 experimental stand-in poses retained. Original upstream 0.13.2 (protocol13) cannot connect to Artur Edition protocol16. Install matching R2.15.1/v0.12.15 on both PCs. Experimental; native game and two-PC behavior not yet tested in vivo. Original HITMAN Co-op by Jordan Rodrigues, GPL-3.0-or-later."
+$ReadmeIntro = "R2.16 BODY RELEASE + ITEM/DISGUISE VISUAL SYNC PREVIEW, Artur Edition v0.12.16 protocol 16 and SDK 4.2.1. Body movement events now follow drag-to-release and send final resting position after 0.35s (including short drags and early-after-knockout drags); receiver attempts to teleport body to released location, but ragdoll physics may still override it. Items picked up by other player now hide their root entity as well as geometry and pickup/visibility flags. NPC body outfits stripped on one PC are mirrored via original upstream 0.13.2 ZActor_SetOutfit hook and reliable Coop_BodyOutfit event, with a short retry if the body is not yet knocked out remotely. FAKE SURRENDER approach animation remains under investigation, NOT fixed. Steam invites and R2.15.1 gameplay unchanged. This is experimental and has NOT yet been live tested on two PCs. Both players must install matching R2.16/v0.12.16 with game 3.290.1.0 and ZHMModSDK 4.2.1.0. Previous R2.15.1 release preserved. Original mod by Jordan Rodrigues, GPL-3.0-or-later."
 $ReadmeOriginal = Get-Content (Join-Path $Stage "READ-ME-FIRST.txt") -Raw
 Set-Content (Join-Path $Stage "READ-ME-FIRST.txt") -Value ($ReadmeIntro + [Environment]::NewLine + $ReadmeOriginal) -Encoding UTF8
 Copy-Item (Join-Path $R2 "NATIVE-AUDIT.md") (Join-Path $Stage "NATIVE-AUDIT.md")
@@ -62,7 +62,7 @@ if ($Installer -notmatch 'requires HITMAN 3.290.1' -or $Installer -notmatch 'Ass
 }
 Set-Content -Path (Join-Path $Stage "installer.ps1") -Value $Installer -Encoding UTF8
 
-$R21 = Join-Path $OutDir "HitmanCoop-0.12.15-3290-sdk421-EXPERIMENTAL-R2.15.1-SDK421-HOTFIX"
+$R21 = Join-Path $OutDir "HitmanCoop-0.12.16-3290-sdk421-EXPERIMENTAL-R2.16-BODY-ITEM-DISGUISE-SYNC-TEST"
 $Zip21 = "$R21.zip"
 Remove-Item $R21,$Zip21 -Recurse -Force -ErrorAction SilentlyContinue
 Copy-Item -Path $R2 -Destination $R21 -Recurse
@@ -76,7 +76,7 @@ Set-Content (Join-Path $R21 "SHA256SUMS.txt") -Value $checks -Encoding ascii
 Compress-Archive -Path $R21 -DestinationPath $Zip21 -CompressionLevel Optimal -Force
 $ZipHash = (Get-FileHash -Algorithm SHA256 $Zip21).Hash.ToLowerInvariant()
 Set-Content "$Zip21.sha256" "$ZipHash  $(Split-Path -Leaf $Zip21)"
-Write-Host "R2.15.1 SDK421 HOTFIX ZIP: $Zip21"
+Write-Host "R2.16 BODY-ITEM-DISGUISE SYNC TEST ZIP: $Zip21"
 Compress-Archive -Path (Join-Path $Stage "*") -DestinationPath $Payload -CompressionLevel Optimal -Force
 $Icon = Join-Path $Root "installer\setup\setup.ico"
 $Manifest = Join-Path $Root "installer\setup\setup.manifest"
@@ -87,5 +87,5 @@ $Hash = (Get-FileHash -Algorithm SHA256 $Setup).Hash.ToLowerInvariant()
 Set-Content -Path "$Setup.sha256" -Value "$Hash  $(Split-Path $Setup -Leaf)"
 Write-Host "OUTPUT: $Setup"
 Write-Host "SHA256: $Hash"
-Write-Host "NOTE: R2.15.1 SDK421 HOTFIX: game 3.290.1.0 and loaded SDK4.2.1.0, both players require mod v0.12.15/protocol16. No gameplay files changed during packaging."
+Write-Host "NOTE: R2.16 BODY/ITEM/DISGUISE SYNC EXPERIMENTAL: both players need v0.12.16, protocol16 and SDK4.2.1, no game files changed."
 Remove-Item $Stage,$Payload -Recurse -Force

@@ -2,6 +2,7 @@
 
 #include <deque>
 #include <functional>
+#include <utility>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -283,10 +284,23 @@ public:
         bool hidden = false;
         bool gone = false;
         bool handled = false; // 47 actually dragged or dumped it; not a physics drift.
+        bool dragging = false;
+        double releasedAt = -1.0;
+        bool outfitKnown = false;
+        ZGlobalOutfitKit* outfitKit = nullptr;
+        int32_t outfitCharset = -1;
+        int32_t outfitVariation = -1;
     };
     std::unordered_map<uint64_t, Body> m_Bodies;
+    std::vector<std::pair<std::string, std::string>> m_OutgoingEvents;
+    std::unordered_map<uint64_t, std::pair<std::string, double>> m_PendingBodyOutfits;
+    bool m_ApplyingBodyOutfit = false;
     std::unordered_map<uint64_t, double> m_PeerBodyMoveUntil; // Avoid bounce-back item events from a freshly mirrored ragdoll.
     void CollectBodyChanges(std::vector<coop::ItemChange>& p_Out);
+    void OnActorOutfitSet(ZActor* p_Actor, ZGlobalOutfitKit* p_Kit, int32_t p_Charset, int32_t p_Variation, bool p_Nude);
+    void ApplyPeerBodyOutfit(const std::string& p_Text);
+    void RememberBodyOutfit(Body& p_Body, ZActor* p_Actor);
+    std::vector<std::pair<std::string, std::string>> TakeOutgoingEvents() { return std::exchange(m_OutgoingEvents, {}); }
     void ApplyPeerBody(const coop::ItemChange& p_Change);
     void AgreeBody(uint64_t p_Id, ZActor* p_Actor);
     std::string BodyTest(const std::string& p_Arg);

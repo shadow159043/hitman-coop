@@ -8,6 +8,7 @@
 
 #include "coop/GameEvents.h"
 #include "coop/Math.h"
+#include "coop/BodySync.h"
 #include "coop/PartnerPresence.h"
 
 #include <algorithm>
@@ -163,6 +164,9 @@ void SdkWorld::OnSceneCleared() {
     m_DroppedItemRequests.clear();
     m_PeerDisguiseLocks.clear();
     m_Bodies.clear();
+    m_OutgoingEvents.clear();
+    m_PendingBodyOutfits.clear();
+    m_ApplyingBodyOutfit = false;
     m_PeerBodyMoveUntil.clear();
     m_PartnerFacingCorrectedAt = -100.0;
     // The scene owns the copy in the stand-in's hand and frees it with the stand-in.
@@ -2598,7 +2602,13 @@ void ForEachSceneItem(F&& p_Do) {
 }
 
 // Hidden: invisible and can't be picked up. Shown: both back.
-void SetItemShown(ZHM5Item* p_Item, bool p_Shown) {
+void SetItemShown(ZHM5Item* p_Item, bool p_Shown, ZEntityRef p_Root = {}) {
+    // Some world objects remain visibly rendered despite their pickup being
+    // disabled. Also toggle the scene item's root visibility where present,
+    // in addition to its geometry and item-visible component. This is purely
+    // cosmetic and is restored when the other player drops/leaves.
+    if (p_Root)
+        p_Root.SetProperty("m_bVisible", p_Shown);
     if (p_Item->m_rGeomentity.m_entityRef)
         p_Item->m_rGeomentity.m_entityRef.SetProperty("m_bVisible", p_Shown);
     if (p_Item->m_pGeomEntity.m_entityRef &&
@@ -2662,7 +2672,7 @@ void SdkWorld::CollectItemChanges(std::vector<coop::ItemChange>& p_Out) {
     // Find held objects by O(1) index lookup, not another 2-pass inventory walk.
     for (const uint64_t s_Id : m_PeerHeldItems) {
         if (const auto s_It = s_Indexes.find(s_Id); s_It != s_Indexes.end())
-            SetItemShown(s_Items[s_It->second].item, false);
+            SetItemShown(s_Items[s_It->second].item, false, s_Items[s_It->second].ref);
     }
     CollectDoorChanges(p_Out);
     CollectBodyChanges(p_Out);
@@ -2734,7 +2744,7 @@ void SdkWorld::ResetItems() {
             ZEntityRef s_Ref;
 
             if (ZHM5Item* s_Item = FindItem(s_Id, s_Ref))
-                SetItemShown(s_Item, true);
+                SetItemShown(s_Item, true, s_Ref);
         }
     }
 
@@ -2876,7 +2886,7 @@ void SdkWorld::ApplyPeerItem(const coop::ItemChange& p_Change) {
 
     if (p_Change.Taken()) {
         m_PeerHeldItems.insert(p_Change.id);
-        SetItemShown(s_Item, false);
+        SetItemShown(s_Item, false, s_Ref);
 
         if (m_Trace)
             m_Trace("item: " + std::to_string(p_Change.id) + " taken by the partner");
@@ -2885,7 +2895,7 @@ void SdkWorld::ApplyPeerItem(const coop::ItemChange& p_Change) {
     }
 
     if (m_PeerHeldItems.erase(p_Change.id)) {
-        SetItemShown(s_Item, true);
+        SetItemShown(s_Item, true, s_Ref);
 
         if (m_Trace)
             m_Trace("item: " + std::to_string(p_Change.id) + " put back by the partner");
@@ -2920,9 +2930,87 @@ void SdkWorld::AgreeBody(uint64_t p_Id, ZActor* p_Actor) {
     s_Body.stillSince = m_Now;
 }
 
+// Imported from original 0.13.2: taking an NPC's disguise invokes
+// ZActor_SetOutfit on the downed NPC. Send its new body clothing separately
+// from the other 47's own outfit so both games show the stripped body.
+void SdkWorld::RememberBodyOutfit(Body& body, ZActor* actor) {
+    body.outfitKnown = true;
+    body.outfitKit = actor->m_rOutfit.m_pInterfaceRef;
+    body.outfitCharset = actor->m_nOutfitCharset;
+    body.outfitVariation = actor->m_nOutfitVariation;
+}
+
+void SdkWorld::OnActorOutfitSet(ZActor* actor, ZGlobalOutfitKit* kit,
+    int32_t charset, int32_t variation, bool nude) {
+    if (m_ApplyingBodyOutfit || !m_InScene || !actor || actor == m_PartnerActor ||
+        !kit || !ActorDown(actor) || charset < 0 || variation < 0)
+        return;
+    ZEntityRef ref;
+    actor->GetID(ref);
+    if (!ref || !ref->GetType()) return;
+    const uint64_t id = ref->GetType()->m_nEntityID;
+    if (const auto it = m_NpcsById.find(id);
+        it == m_NpcsById.end() || it->second != actor) return;
+    const auto repo = OutfitKitToRepositoryId(kit);
+    if (repo.empty() || repo.size() > 160) return;
+    if (m_OutgoingEvents.size() < 64)
+        m_OutgoingEvents.emplace_back("Coop_BodyOutfit", std::to_string(id) + " " + repo + " " +
+            std::to_string(charset) + " " + std::to_string(variation) + (nude ? " 1" : " 0"));
+    if (auto it = m_Bodies.find(id); it != m_Bodies.end())
+        it->second.outfitKnown = false;
+    if (m_Trace) m_Trace("body: local outfit " + std::to_string(id) + (nude ? " stripped" : " changed"));
+}
+
+void SdkWorld::ApplyPeerBodyOutfit(const std::string& data) {
+    if (!m_InScene || data.size() > 300) return;
+    std::istringstream in(data);
+    uint64_t id = 0;
+    std::string repo;
+    int32_t charset = -1, variation = -1, nude = -1;
+    std::string trailing;
+    if (!(in >> id >> repo >> charset >> variation >> nude) || (in >> trailing) ||
+        id == 0 || repo.size() > 160 || charset < 0 || variation < 0 ||
+        variation > 255 || (nude != 0 && nude != 1)) return;
+    auto* actor = FindNpc(id);
+    const auto* kit = FindOutfitKit(repo);
+    if (!kit || !kit->m_pInterfaceRef ||
+        static_cast<size_t>(charset) >= kit->m_pInterfaceRef->m_aCharSets.size()) return;
+    // The reliable outfit event can arrive before the remote NPC's pacify
+    // is reflected locally; remember it briefly rather than losing clothing.
+    if (!actor || !ActorDown(actor)) {
+        if (m_PendingBodyOutfits.size() < 64 || m_PendingBodyOutfits.contains(id))
+            m_PendingBodyOutfits[id] = {data, m_Now + 12.0};
+        return;
+    }
+    if (actor == m_PartnerActor || actor == m_LocalVictim) return;
+    // Keep peer-driven native outfit changes from echoing to their sender.
+    m_ApplyingBodyOutfit = true;
+    Functions::ZActor_SetOutfit->Call(actor, *kit, charset, variation, nude == 1);
+    m_ApplyingBodyOutfit = false;
+    auto& body = m_Bodies[id];
+    if (body.downAt <= 0.0) body.downAt = m_Now;
+    RememberBodyOutfit(body, actor);
+    m_PendingBodyOutfits.erase(id);
+    if (m_Trace) m_Trace("body: partner changed clothing on " + std::to_string(id) +
+        (nude ? " (stripped)" : ""));
+}
+
 void SdkWorld::CollectBodyChanges(std::vector<coop::ItemChange>& p_Out) {
     if (m_NpcsById.empty())
         return;
+
+    for (auto it = m_PendingBodyOutfits.begin(); it != m_PendingBodyOutfits.end();) {
+        if (m_Now >= it->second.second) {
+            it = m_PendingBodyOutfits.erase(it);
+            continue;
+        }
+        const auto* npc = FindNpc(it->first);
+        if (npc && ActorDown(const_cast<ZActor*>(npc))) {
+            const std::string text = it->second.first;
+            it = m_PendingBodyOutfits.erase(it);
+            ApplyPeerBodyOutfit(text);
+        } else ++it;
+    }
 
     for (const auto& [s_Id, s_Actor] : m_NpcsById) {
         coop::Transform s_Xf;
@@ -2936,46 +3024,83 @@ void SdkWorld::CollectBodyChanges(std::vector<coop::ItemChange>& p_Out) {
         if (s_New) {
             s_Body.downAt = m_Now;
             s_Body.hidden = s_Actor->m_bBodyHidden;
-        }
-        // Upstream 0.13.2: never interpret a body settling under physics
-        // as one moved by the player. Only a body handled locally may trigger
-        // a moved-body event; hiding a body still sends normally.
-        if (s_Actor != m_RemoteVictim &&
-            (s_Actor->m_bIsBeingDragged || s_Actor->m_bIsBeingDumped))
-            s_Body.handled = true;
-
-        // Where it fell, in each game its own way (a fall takes a few seconds): nothing to tell. The
-        // partner's victim moves with their stream.
-        if (m_Now - s_Body.downAt < 4.0 || s_Actor == m_RemoteVictim) {
             s_Body.agreed = s_Body.last = s_Xf.pos;
             s_Body.stillSince = m_Now;
-            continue;
+        }
+
+        // Upstream 0.13.2: a stripped or re-dressed NPC must look the same
+        // on the other screen, not merely have their disguise pickup blocked.
+        if (!s_Body.outfitKnown) {
+            RememberBodyOutfit(s_Body, s_Actor);
+        } else if (s_Actor->m_rOutfit.m_pInterfaceRef != s_Body.outfitKit ||
+                   s_Actor->m_nOutfitCharset != s_Body.outfitCharset ||
+                   s_Actor->m_nOutfitVariation != s_Body.outfitVariation) {
+            RememberBodyOutfit(s_Body, s_Actor);
+            if (s_Actor != m_RemoteVictim) {
+                const auto repo = s_Body.outfitKit ? OutfitKitToRepositoryId(s_Body.outfitKit) : std::string();
+                if (!repo.empty() && repo.size() <= 160 && m_OutgoingEvents.size() < 64)
+                    m_OutgoingEvents.emplace_back("Coop_BodyOutfit", std::to_string(s_Id) + " " +
+                        repo + " " + std::to_string(s_Body.outfitCharset) + " " +
+                        std::to_string(s_Body.outfitVariation) + " 0");
+            }
+        }
+
+        // Detect the exact transition from user dragging to releasing it.
+        // The original code reset "agreed" during the first four seconds of a
+        // takedown, losing short drags and preventing any network teleport.
+        const bool dragging = s_Actor != m_RemoteVictim &&
+            (s_Actor->m_bIsBeingDragged || s_Actor->m_bIsBeingDumped);
+        if (dragging) {
+            s_Body.handled = true;
+            s_Body.dragging = true;
+            s_Body.releasedAt = -1.0;
+        } else if (s_Body.dragging) {
+            s_Body.dragging = false;
+            s_Body.releasedAt = m_Now;
         }
 
         if (coop::Distance(s_Xf.pos, s_Body.last) > 0.05f) {
             s_Body.last = s_Xf.pos;
             s_Body.stillSince = m_Now;
         }
-
-        if (s_Actor->m_bIsBeingDragged || s_Actor->m_bIsBeingDumped ||
-            (m_PeerBodyMoveUntil.contains(s_Id) && m_Now < m_PeerBodyMoveUntil[s_Id]))
+        // The partner's victim uses its existing synchronized victim pose.
+        if (s_Actor == m_RemoteVictim) {
+            s_Body.agreed = s_Xf.pos;
+            continue;
+        }
+        // Newly knocked-out bodies settle independently on each PC; only a
+        // body that was actually dragged can bypass the four-second grace.
+        if (!s_Body.handled && m_Now - s_Body.downAt < 4.0) {
+            s_Body.agreed = s_Xf.pos;
+            continue;
+        }
+        if (dragging || (m_PeerBodyMoveUntil.contains(s_Id) &&
+                         m_Now < m_PeerBodyMoveUntil[s_Id]))
             continue;
 
         const bool s_Hidden = s_Actor->m_bBodyHidden;
-        // More than a nudge (walking into a body shifts it a little), and at rest for a moment.
-        const bool s_Moved = s_Body.handled &&
-            coop::Distance(s_Xf.pos, s_Body.agreed) > 1.5f && m_Now - s_Body.stillSince > 0.6;
-
+        const bool s_Settled = m_Now - s_Body.stillSince >= 0.25;
+        const float s_Distance = coop::Distance(s_Xf.pos, s_Body.agreed);
+        const bool s_Moved = coop::body_sync::ShouldSendMoved(s_Body.handled,
+            s_Body.releasedAt >= 0.0, s_Settled, s_Distance,
+            m_Now - s_Body.releasedAt);
+        // For hidden bodies preserve the original hiding semantics.
         if (s_Hidden == s_Body.hidden && !s_Moved)
             continue;
 
         s_Body.hidden = s_Hidden;
-        s_Body.agreed = s_Xf.pos;
+        s_Body.agreed = s_Body.last = s_Xf.pos;
         s_Body.handled = false;
-        p_Out.push_back({ s_Id, static_cast<uint8_t>(coop::ItemFlag_Body | (s_Hidden ? coop::ItemFlag_BodyHidden : 0)), s_Xf });
+        s_Body.dragging = false;
+        s_Body.releasedAt = -1.0;
+        p_Out.push_back({ s_Id, static_cast<uint8_t>(
+            coop::ItemFlag_Body | (s_Hidden ? coop::ItemFlag_BodyHidden : 0)), s_Xf });
 
         if (m_Trace)
-            m_Trace(std::string("body: ") + s_Actor->m_sActorName.c_str() + (s_Hidden ? " put away" : " moved") + ", told to the partner");
+            m_Trace(std::string("body: ") + s_Actor->m_sActorName.c_str() +
+                (s_Hidden ? " stored" : " dragged/released") +
+                ", sent resting position (" + std::to_string(s_Xf.pos.x) + ", " +
+                std::to_string(s_Xf.pos.y) + ")");
     }
 
     // A body the game took out of the mission (disabled) after it was put away somewhere.
@@ -3027,6 +3152,13 @@ void SdkWorld::ApplyPeerBody(const coop::ItemChange& p_Change) {
 
     AgreeBody(p_Change.id, s_Actor);
     auto& s_Body = m_Bodies[p_Change.id];
+    // Remember the sender's final position, not the receiver's local
+    // ragdoll position (which can remain at its old physics location).
+    s_Body.agreed = s_Body.last = p_Change.xf.pos;
+    s_Body.stillSince = m_Now;
+    s_Body.handled = false;
+    s_Body.dragging = false;
+    s_Body.releasedAt = -1.0;
     s_Body.hidden = s_Hidden;
 
     if (m_Trace)
