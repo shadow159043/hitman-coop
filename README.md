@@ -1,5 +1,10 @@
 # HITMAN Co-op
 
+> **Artur compatibility edition (experimental R2).** This fork updates the original HITMAN Co-op
+> for HITMAN 3.290.1.0 / ZHMModSDK 4.2.0. The co-op developer and original author is
+> **Jordan Rodrigues**. Artur is credited for this edition, not as creator of the original game mod.
+> See [two-PC validation](docs/two-pc-test-20261030.md) and [credits](CREDITS.md).
+
 **Two-player co-op for HITMAN World of Assassination.**
 Created by **Jordan Rodrigues**.
 

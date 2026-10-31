@@ -2,6 +2,10 @@
 
 **HITMAN Co-op** - created by **Jordan Rodrigues**.
 
+**Artur compatibility edition:** HITMAN 3.290.1.0 / ZHMModSDK 4.2.0 fork,
+launcher edition branding, bug-fix validation and testing with two PCs.
+Original source, history, copyrights and GPL terms remain intact.
+
 Design, networking, the co-op session and sync, the in-game overlay, the installer and the co-op
 server: Jordan Rodrigues.
 

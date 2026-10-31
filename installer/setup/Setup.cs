@@ -28,7 +28,8 @@ namespace HitmanCoopSetup
     static class Program
     {
         public const string Version = "0.12.1";
-        public const string Author = "Jordan Rodrigues";
+        public const string Author = "Jordan Rodrigues"; // Original creator and copyright holder.
+        public const string EditionBy = "Artur"; // Credit for this compatibility edition.
 
         [STAThread]
         static void Main(string[] args)
@@ -56,7 +57,7 @@ namespace HitmanCoopSetup
         public static readonly Color Good = Color.FromArgb(88, 214, 116);
     }
 
-    // The title card: big red HITMAN CO-OP and a gold, shimmering "created by Jordan Rodrigues".
+    // The title card: big red HITMAN CO-OP and a gold "by Artur" edition credit.
     class Banner : Control
     {
         readonly Timer m_Timer = new Timer();
@@ -107,8 +108,8 @@ namespace HitmanCoopSetup
                 g.DrawString("CO-OP", title, redText, 40 + w.Width - 14, 18);
             }
 
-            // "created by Jordan Rodrigues" with a light sweep across the gold.
-            string by = "★  created by " + Program.Author + "  ★";
+            // "by Artur" with a light sweep across the gold.
+            string by = "★  by " + Program.EditionBy + "  ★";
             using (var font = new Font("Segoe UI Semibold", 20f, FontStyle.Bold, GraphicsUnit.Pixel))
             {
                 SizeF size = g.MeasureString(by, font);
@@ -170,7 +171,7 @@ namespace HitmanCoopSetup
             SuspendLayout();
             AutoScaleDimensions = new SizeF(96f, 96f);
             AutoScaleMode = AutoScaleMode.Dpi;
-            Text = "HITMAN Co-op Setup  —  created by " + Program.Author;
+            Text = "HITMAN Co-op Setup  —  by " + Program.EditionBy;
             ClientSize = new Size(700, 560);
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
@@ -232,8 +233,8 @@ namespace HitmanCoopSetup
 
             var footer = new Label
             {
-                Text = "HITMAN Co-op v" + Program.Version + "  ·  © 2026 " + Program.Author +
-                       "  ·  GPL-3.0  ·  uses ZHMModSDK by OrfeasZ",
+                Text = "Artur edition  ·  Original by " + Program.Author +
+                       "  ·  GPL-3.0  ·  ZHMModSDK by OrfeasZ",
                 ForeColor = Theme.Dim,
                 Font = new Font("Segoe UI", 8.5f),
                 Bounds = new Rectangle(28, 524, 644, 22)
