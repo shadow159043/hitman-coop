@@ -15,7 +15,8 @@ namespace coop {
 // 10: player status (alerts, menus, mission stats), mark kinds, what a loading partner loads.
 // 11: the host's mod version in Welcome, a player's colour and "away" in their status.
 // 13: optional host room code and password checked before a peer can join.
-constexpr uint32_t kProtocolVersion = 13;
+// 14: optional source NPC ID on outfit changes for shared corpse-disguise availability.
+constexpr uint32_t kProtocolVersion = 14;
 
 constexpr uint16_t kDefaultPort = 47047;
 constexpr size_t kMaxPacketSize = 1200;
@@ -193,6 +194,7 @@ struct MsgVictimPose {
 
 struct MsgOutfit {
     OutfitDesc outfit;
+    uint64_t sourceNpcId = 0; // Nonzero only when one unambiguous nearby corpse supplied this disguise.
 
     void Write(ByteWriter& w) const;
     bool Read(ByteReader& r);

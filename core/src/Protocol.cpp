@@ -353,10 +353,11 @@ void MsgOutfit::Write(ByteWriter& w) const {
     w.Str(outfit.repositoryId);
     w.I32(outfit.charset);
     w.I32(outfit.variation);
+    w.U64(sourceNpcId);
 }
 
 bool MsgOutfit::Read(ByteReader& r) {
-    if (!r.Str(outfit.repositoryId, 64) || !r.I32(outfit.charset) || !r.I32(outfit.variation))
+    if (!r.Str(outfit.repositoryId, 64) || !r.I32(outfit.charset) || !r.I32(outfit.variation) || !r.U64(sourceNpcId))
         return false;
 
     if (outfit.charset < 0 || outfit.charset > 255 || outfit.variation < 0 || outfit.variation > 255)

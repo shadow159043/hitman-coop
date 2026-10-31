@@ -83,6 +83,12 @@ public:
         remoteOutfit = p_Outfit;
         ++remoteOutfitChanges;
     }
+    bool FindLocalDisguiseSource(const coop::OutfitDesc&, uint64_t& p_NpcId) const override {
+        if (!localDisguiseSourceId) return false;
+        p_NpcId = localDisguiseSourceId;
+        return true;
+    }
+    void BlockPeerDisguise(uint64_t p_NpcId) override { blockedDisguises.push_back(p_NpcId); }
 
     void ListNpcs(std::vector<coop::NpcState>& p_Out) const override {
         if (!inScene)
@@ -245,6 +251,8 @@ public:
     std::vector<coop::ItemChange> itemChanges; // ours, waiting to be collected
     std::vector<coop::ItemChange> peerItems;   // the partner's, as applied
     int itemResets = 0;
+    uint64_t localDisguiseSourceId = 0;
+    std::vector<uint64_t> blockedDisguises;
     std::vector<coop::NpcAlert> alerts;     // ours
     std::set<uint64_t> puppets;             // NPCs the partner runs (AI off here)
     bool paused = false;                    // our player has a pause menu open

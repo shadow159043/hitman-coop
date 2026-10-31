@@ -347,13 +347,19 @@ TEST(Session_OutfitChangesPropagate) {
 
     CHECK(d.clientWorld.remoteOutfit == d.hostWorld.outfit);
 
+    d.hostWorld.localDisguiseSourceId = 0x1004;
     d.hostWorld.outfit = { "0a4ea2b1-4b4b-4e28-a5ad-d1a0c2dd2c7b", 1, 2 };
     d.Step(0.5);
     CHECK(d.clientWorld.remoteOutfit == d.hostWorld.outfit);
+    REQUIRE(d.clientWorld.blockedDisguises.size() == 1);
+    CHECK(d.clientWorld.blockedDisguises[0] == 0x1004);
 
+    d.clientWorld.localDisguiseSourceId = 0x1008;
     d.clientWorld.outfit = { "11111111-2222-3333-4444-555555555555", 0, 3 };
     d.Step(0.5);
     CHECK(d.hostWorld.remoteOutfit == d.clientWorld.outfit);
+    REQUIRE(d.hostWorld.blockedDisguises.size() == 1);
+    CHECK(d.hostWorld.blockedDisguises[0] == 0x1008);
 }
 
 TEST(Session_HostKillReplicatesToClient) {
@@ -500,6 +506,34 @@ TEST(Session_RestartReachesThePartnerInTheSameMission) {
     d.host.OnLocalRestart("assembly:/_pro/scenes/missions/paris/_scene_paris.entity");
     d.Step(0.5);
     CHECK(d.clientWorld.restarts == 0);
+}
+
+TEST(Session_LocalMeleeTemporarilyReleasesRemoteNpcPuppet) {
+    SessionConfig s_Config;
+    s_Config.ownerHysteresis = 1000.f; // Keep host authoritative for the purpose of this test.
+    Duo d(76, s_Config);
+    d.HostLoads(c_Miami, 1);
+    d.ClientLoads(c_Miami, 1, 0.f);
+    d.hostWorld.player.pos = { 100.f, 0.f, 100.f };
+    // Follow the NPC so the client's local guard stays within melee distance.
+    d.onStep = [&](double) {
+        d.clientWorld.player.pos = d.clientWorld.npcs[0x1000].xf.pos + Vec3 { 0.3f, 0.f, 0.f };
+    };
+    d.Start();
+    REQUIRE(d.StepUntilSynced(3.0));
+    d.Step(1.5);
+    REQUIRE(d.clientWorld.puppets.count(0x1000));
+
+    d.clientWorld.npcs[0x1000].tension = 5; // The local 47 is engaged in combat.
+    d.Step(0.25);
+    CHECK(!d.clientWorld.puppets.count(0x1000)); // Local AI can react to punches.
+    const int s_Corrections = d.clientWorld.npcCorrections;
+    d.Step(0.2);
+    CHECK(d.clientWorld.npcCorrections == s_Corrections); // No remote pose/position override during melee.
+
+    d.clientWorld.npcs[0x1000].tension = 0;
+    d.Step(0.4);
+    CHECK(d.clientWorld.puppets.count(0x1000)); // Remote ownership resumes after combat.
 }
 
 TEST(Session_NpcPosesReachTheOtherGame) {

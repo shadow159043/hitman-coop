@@ -118,8 +118,8 @@ TEST(Protocol_RoundTripAll) {
         CHECK(!Decode(Encode(m), o));
     }
     {
-        MsgOutfit m { { "fd56a934-f402-4b02-bdf7-9bf3d6ed9a2b", 2, 1 } }, o;
-        CHECK(Decode(Encode(m), o) && o.outfit == m.outfit);
+        MsgOutfit m { { "fd56a934-f402-4b02-bdf7-9bf3d6ed9a2b", 2, 1 }, 0x1007 }, o;
+        CHECK(Decode(Encode(m), o) && o.outfit == m.outfit && o.sourceNpcId == 0x1007);
 
         m.outfit.charset = -1;
         CHECK(!Decode(Encode(m), o));

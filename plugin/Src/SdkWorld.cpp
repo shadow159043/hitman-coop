@@ -148,7 +148,11 @@ void SdkWorld::OnSceneCleared() {
     m_HasPartnerSentXf = false;
     m_Items.clear();
     m_PeerHeldItems.clear();
+    m_PendingPeerItems.clear();
+    m_PeerDisguiseLocks.clear();
     m_Bodies.clear();
+    m_PeerBodyMoveUntil.clear();
+    m_PartnerFacingCorrectedAt = -100.0;
     // The scene owns the copy in the stand-in's hand and frees it with the stand-in.
     m_StandInItem = {};
     m_StandInItemShown.clear();
@@ -247,6 +251,66 @@ bool SdkWorld::GetLocalOutfit(coop::OutfitDesc& p_Out) const {
     p_Out.charset = s_Hitman->m_nOutfitCharset;
     p_Out.variation = s_Hitman->m_nOutfitVariation;
     return !p_Out.repositoryId.empty();
+}
+
+// Disguise pickups are tied to a specific NPC body, not to an outfit kit: several guards may
+// wear the same uniform. Only report one if EXACTLY ONE nearby downed actor wears this kit;
+// picking an arbitrary one would disable the wrong disguise on the partner's PC.
+bool SdkWorld::FindLocalDisguiseSource(const coop::OutfitDesc& p_Outfit, uint64_t& p_NpcId) const {
+    if (!m_InScene || p_Outfit.repositoryId.empty())
+        return false;
+
+    coop::Transform s_Local;
+
+    if (!GetLocalAvatar(s_Local))
+        return false;
+
+    uint64_t s_Candidate = 0;
+    int s_Count = 0;
+
+    for (const auto& [s_Id, s_Actor] : m_NpcsById) {
+        if (!s_Actor || s_Actor == m_PartnerActor || !(s_Actor->IsDead() || s_Actor->IsPacified()) ||
+            !s_Actor->m_rOutfit.m_pInterfaceRef ||
+            OutfitKitToRepositoryId(s_Actor->m_rOutfit.m_pInterfaceRef) != p_Outfit.repositoryId)
+            continue;
+
+        ZEntityRef s_Ref;
+        s_Actor->GetID(s_Ref);
+        const auto* s_Spatial = s_Ref.QueryInterface<ZSpatialEntity>();
+
+        if (!s_Spatial || coop::Distance(ToTransform(s_Spatial->GetObjectToWorldMatrix()).pos, s_Local.pos) > 2.5f)
+            continue;
+
+        s_Candidate = s_Id;
+        ++s_Count;
+
+        if (s_Count > 1)
+            return false; // Two same-uniform bodies in range: do not guess.
+    }
+
+    if (s_Count != 1)
+        return false;
+
+    p_NpcId = s_Candidate;
+    return true;
+}
+
+void SdkWorld::BlockPeerDisguise(uint64_t p_NpcId) {
+    if (!m_InScene || m_PeerDisguiseLocks.contains(p_NpcId))
+        return;
+
+    ZActor* s_Actor = FindNpc(p_NpcId);
+
+    if (!s_Actor || s_Actor == m_PartnerActor)
+        return;
+
+    m_PeerDisguiseLocks[p_NpcId] = s_Actor->m_bBlockDisguisePickup;
+    s_Actor->m_bBlockDisguisePickup = true;
+    ZEntityRef s_Ref;
+    s_Actor->GetID(s_Ref);
+    s_Ref.SetProperty("m_bBlockDisguisePickup", true);
+    if (m_Trace)
+        m_Trace("disguise: body " + std::to_string(p_NpcId) + " used by partner; local pickup disabled");
 }
 
 ZTemplateEntityFactory* SdkWorld::PartnerTemplate(bool& p_Failed) {
@@ -1758,8 +1822,20 @@ void SdkWorld::ShowRemoteAvatar(const coop::Transform& p_Xf) {
             }
 
             // Only a big gap (a vault, a ladder, lag) is closed by teleporting.
-            if (coop::Distance(p_Xf.pos, s_Now.pos) > 8.f)
+            const float s_Gap = coop::Distance(p_Xf.pos, s_Now.pos);
+            if (s_Gap > 8.f)
                 s_Spatial->SetObjectToWorldMatrixFromEditor(ToMatrix(p_Xf));
+            else if (s_Gap < 1.5f && m_PartnerSpeed > 0.35f &&
+                     coop::AngleBetween(p_Xf.rot, s_Now.rot) > 0.45f &&
+                     m_Now - m_PartnerFacingCorrectedAt > 0.20) {
+                // The patrol helper uses RA_NONE while travelling, so its feet can face sideways
+                // long after the sender has turned. Correct rotation only (never position),
+                // softly and at most five times per second to avoid breaking NPC locomotion.
+                coop::Transform s_Face = s_Now;
+                s_Face.rot = coop::Nlerp(s_Now.rot, p_Xf.rot, 0.65f);
+                s_Spatial->SetObjectToWorldMatrixFromEditor(ToMatrix(s_Face));
+                m_PartnerFacingCorrectedAt = m_Now;
+            }
 
             return;
         }
@@ -2448,6 +2524,15 @@ void SdkWorld::CollectItemChanges(std::vector<coop::ItemChange>& p_Out) {
         return;
 
     m_NextItemScan = m_Now + 0.1;
+    // Late-spawning scene items may have missed a reliable peer pickup/dropped event.
+    // Keep the latest event until the matching entity exists (bounded memory).
+    for (auto s_It = m_PendingPeerItems.begin(); s_It != m_PendingPeerItems.end();) {
+        ZEntityRef s_Ref;
+        if (!FindItem(s_It->first, s_Ref)) { ++s_It; continue; }
+        const coop::ItemChange s_Event = s_It->second;
+        s_It = m_PendingPeerItems.erase(s_It);
+        ApplyPeerItem(s_Event);
+    }
     CollectDoorChanges(p_Out);
     CollectBodyChanges(p_Out);
     const auto s_Player = SDK()->GetLocalPlayer();
@@ -2510,6 +2595,16 @@ void SdkWorld::ResetItems() {
     }
 
     m_PeerHeldItems.clear();
+    m_PendingPeerItems.clear();
+    for (const auto& [s_Id, s_WasBlocked] : m_PeerDisguiseLocks) {
+        if (ZActor* s_Actor = FindNpc(s_Id)) {
+            s_Actor->m_bBlockDisguisePickup = s_WasBlocked;
+            ZEntityRef s_Ref;
+            s_Actor->GetID(s_Ref);
+            s_Ref.SetProperty("m_bBlockDisguisePickup", s_WasBlocked);
+        }
+    }
+    m_PeerDisguiseLocks.clear();
     m_Items.clear();
 }
 
@@ -2530,8 +2625,14 @@ void SdkWorld::ApplyPeerItem(const coop::ItemChange& p_Change) {
     ZEntityRef s_Ref;
     ZHM5Item* s_Item = FindItem(p_Change.id, s_Ref);
 
-    if (!s_Item)
+    if (!s_Item) {
+        // Some items appear after the session starts; don't permanently lose the
+        // reliable pickup event just because the corresponding local item was late.
+        if (m_PendingPeerItems.size() < 256 || m_PendingPeerItems.contains(p_Change.id))
+            m_PendingPeerItems[p_Change.id] = p_Change;
         return;
+    }
+    m_PendingPeerItems.erase(p_Change.id);
 
     // Both took it at once: ours stays ours.
     if (const auto s_Player = SDK()->GetLocalPlayer(); s_Player && s_Item->m_pOwner == s_Player.m_entityRef)
@@ -2614,7 +2715,8 @@ void SdkWorld::CollectBodyChanges(std::vector<coop::ItemChange>& p_Out) {
             s_Body.stillSince = m_Now;
         }
 
-        if (s_Actor->m_bIsBeingDragged || s_Actor->m_bIsBeingDumped)
+        if (s_Actor->m_bIsBeingDragged || s_Actor->m_bIsBeingDumped ||
+            (m_PeerBodyMoveUntil.contains(s_Id) && m_Now < m_PeerBodyMoveUntil[s_Id]))
             continue;
 
         const bool s_Hidden = s_Actor->m_bBodyHidden;
@@ -2661,20 +2763,31 @@ void SdkWorld::ApplyPeerBody(const coop::ItemChange& p_Change) {
     if (s_Actor == m_RemoteVictim)
         ReleaseRemoteVictim();
 
-    // Hidden with the game's own flag for a body in a closet or a container, so no NPC here finds
-    // it, and out of sight.
     ZEntityRef s_Ref;
     s_Actor->GetID(s_Ref);
-    s_Actor->m_bBodyHidden = true;
-    s_Ref.SetProperty("m_bVisible", false);
+    const bool s_Hidden = (p_Change.flags & coop::ItemFlag_BodyHidden) != 0;
+    if (s_Hidden) {
+        // Stored in a container: follow the sender's hidden state.
+        s_Actor->m_bBodyHidden = true;
+        s_Ref.SetProperty("m_bVisible", false);
+    } else {
+        // A body DRAGGED AND RELEASED elsewhere is not stored in a container. Previously
+        // we always hid it here. Try to show it at the sender's new resting location.
+        // Ragdoll physics may still drift after this placement (needs two-PC validation).
+        if (auto* s_Spatial = s_Ref.QueryInterface<ZSpatialEntity>())
+            s_Spatial->SetObjectToWorldMatrixFromEditor(ToMatrix(p_Change.xf));
+        s_Actor->m_bBodyHidden = false;
+        s_Ref.SetProperty("m_bVisible", true);
+        m_PeerBodyMoveUntil[p_Change.id] = m_Now + 4.0;
+    }
 
     AgreeBody(p_Change.id, s_Actor);
     auto& s_Body = m_Bodies[p_Change.id];
-    s_Body.hidden = true;
+    s_Body.hidden = s_Hidden;
 
     if (m_Trace)
         m_Trace(std::string("body: ") + s_Actor->m_sActorName.c_str() +
-            ((p_Change.flags & coop::ItemFlag_BodyHidden) ? " put away" : " moved") + " by the partner, hidden here");
+            (s_Hidden ? " stored by partner (hidden here)" : " moved by partner (repositioned here)"));
 }
 
 std::string SdkWorld::BodyTest(const std::string& p_Arg) {

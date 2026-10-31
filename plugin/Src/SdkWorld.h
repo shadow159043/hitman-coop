@@ -33,6 +33,8 @@ public:
     coop::SceneDesc CurrentScene() const override { return m_Scene; }
     bool GetLocalAvatar(coop::Transform& p_Out) const override;
     bool GetLocalOutfit(coop::OutfitDesc& p_Out) const override;
+    bool FindLocalDisguiseSource(const coop::OutfitDesc& p_Outfit, uint64_t& p_NpcId) const override;
+    void BlockPeerDisguise(uint64_t p_NpcId) override;
     void ShowRemoteAvatar(const coop::Transform& p_Xf) override;
     void HideRemoteAvatar() override;
     void SetRemoteOutfit(const coop::OutfitDesc& p_Outfit) override;
@@ -277,6 +279,7 @@ public:
         bool gone = false;
     };
     std::unordered_map<uint64_t, Body> m_Bodies;
+    std::unordered_map<uint64_t, double> m_PeerBodyMoveUntil; // Avoid bounce-back item events from a freshly mirrored ragdoll.
     void CollectBodyChanges(std::vector<coop::ItemChange>& p_Out);
     void ApplyPeerBody(const coop::ItemChange& p_Change);
     void AgreeBody(uint64_t p_Id, ZActor* p_Actor);
@@ -403,6 +406,7 @@ private:
     std::unordered_set<ZActor*> m_RigRejected; // test only
     coop::Transform m_PartnerSentXf; // where the partner said they are, before the stand-in follows
     bool m_HasPartnerSentXf = false;
+    double m_PartnerFacingCorrectedAt = -100.0; // Throttle rotation correction in AI-walking fallback.
 
     // Scene items (see coop::ItemChange). Ours: what our 47 holds, and ones it let go of, followed
     // while they move. The partner's: hidden here while they hold them.
@@ -413,6 +417,9 @@ private:
     };
     std::unordered_map<uint64_t, TrackedItem> m_Items;
     std::unordered_set<uint64_t> m_PeerHeldItems;
+    // A peer can pick up an item before its entity spawns locally. Reapply it on later scans.
+    std::unordered_map<uint64_t, coop::ItemChange> m_PendingPeerItems;
+    std::unordered_map<uint64_t, bool> m_PeerDisguiseLocks; // Original per-body pickup state to restore on disconnect.
     double m_NextItemScan = 0.0;
     class ZHM5Item* FindItem(uint64_t p_Id, ZEntityRef& p_Ref) const;
 

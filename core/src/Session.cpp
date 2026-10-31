@@ -752,8 +752,11 @@ void Session::HandleMessage(const Message& p_Msg, double p_Now) {
             m_RemoteOutfit = s_Outfit.outfit;
             m_HasRemoteOutfit = true;
 
-            if (IsSynced())
+            if (IsSynced()) {
                 m_World.SetRemoteOutfit(m_RemoteOutfit);
+                if (s_Outfit.sourceNpcId != 0)
+                    m_World.BlockPeerDisguise(s_Outfit.sourceNpcId);
+            }
 
             break;
         }
@@ -1107,7 +1110,12 @@ void Session::UpdateOutfit() {
         return;
 
     if (!m_HasLocalOutfitSent || s_Outfit != m_LastSentOutfit) {
-        m_Conn->SendReliable(MsgType::Outfit, Encode(MsgOutfit { s_Outfit }));
+        uint64_t s_SourceNpc = 0;
+        // Only assign a body on an actual outfit change while already connected. A suit
+        // worn on session start must not accidentally consume a nearby corpse's disguise.
+        if (m_HasLocalOutfitSent && s_Outfit != m_LastSentOutfit)
+            m_World.FindLocalDisguiseSource(s_Outfit, s_SourceNpc);
+        m_Conn->SendReliable(MsgType::Outfit, Encode(MsgOutfit { s_Outfit, s_SourceNpc }));
         m_LastSentOutfit = s_Outfit;
         m_HasLocalOutfitSent = true;
     }
@@ -1349,8 +1357,16 @@ void Session::SetOwners(const std::vector<NpcOwnership>& p_Changes) {
 // Every listed NPC that is alive and standing is a puppet exactly when the partner runs it. A
 // knocked out one lies where it fell in each game.
 void Session::ReconcilePuppets() {
+    Transform s_Local;
+    const bool s_HaveLocal = m_World.GetLocalAvatar(s_Local);
     for (const auto& s_Npc : Npcs()) {
-        const bool s_Want = s_Npc.Alive() && !KnockedOut(s_Npc) && OwnerOf(s_Npc.id) != MyOwner();
+        // If a guard is fighting the local 47 at arm's reach, suppress its remote puppet.
+        // Otherwise it may be frozen against punches or its streamed pose overrides melee
+        // reactions. After combat ends, normal host-directed ownership resumes.
+        const bool s_FightingLocal = s_HaveLocal && s_Npc.tension >= 4 &&
+            Distance(s_Local.pos, s_Npc.xf.pos) < 4.f;
+        const bool s_Want = s_Npc.Alive() && !KnockedOut(s_Npc) &&
+            OwnerOf(s_Npc.id) != MyOwner() && !s_FightingLocal;
         const bool s_Is = m_Puppeted.count(s_Npc.id) != 0;
 
         if (s_Want == s_Is)
@@ -1447,6 +1463,10 @@ void Session::UpdateSharedNpcs(double p_Now) {
         else
             ReconcilePuppets(); // NPCs that appeared or died since
     }
+
+    // Re-evaluate local combat on both machines even when ownership is unchanged. This
+    // releases puppets during nearby melee and resumes them when the fight is over.
+    ReconcilePuppets();
 
     // The NPCs we run, to the partner: those that moved, and every one now and then. Those far
     // from the partner (who only sees them from afar) a quarter as often.
