@@ -297,6 +297,11 @@ public:
     std::vector<std::pair<std::string, std::string>> m_OutgoingEvents;
     std::unordered_map<uint64_t, std::pair<std::string, double>> m_PendingBodyOutfits;
     bool m_ApplyingBodyOutfit = false;
+    // A received disguise source is reliable even when the native outfit hook
+    // missed the strip. Defer the visual change until this NPC is down locally.
+    std::unordered_map<uint64_t, double> m_PendingPeerDisguiseStrips;
+    std::unordered_set<uint64_t> m_AppliedPeerDisguiseStrips;
+    bool TryApplyPeerDisguiseStrip(uint64_t p_NpcId);
     std::unordered_map<uint64_t, double> m_PeerBodyMoveUntil; // Avoid bounce-back item events from a freshly mirrored ragdoll.
     void CollectBodyChanges(std::vector<coop::ItemChange>& p_Out);
     void OnActorOutfitSet(ZActor* p_Actor, ZGlobalOutfitKit* p_Kit, int32_t p_Charset, int32_t p_Variation, bool p_Nude);

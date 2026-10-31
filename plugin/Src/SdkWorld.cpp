@@ -172,6 +172,8 @@ void SdkWorld::OnSceneCleared() {
     m_OutgoingEvents.clear();
     m_PendingBodyOutfits.clear();
     m_ApplyingBodyOutfit = false;
+    m_PendingPeerDisguiseStrips.clear();
+    m_AppliedPeerDisguiseStrips.clear();
     m_PeerBodyMoveUntil.clear();
     m_PartnerFacingCorrectedAt = -100.0;
     // The scene owns the copy in the stand-in's hand and frees it with the stand-in.
@@ -331,21 +333,32 @@ bool SdkWorld::FindLocalDisguiseSource(const coop::OutfitDesc& p_Outfit, uint64_
 }
 
 void SdkWorld::BlockPeerDisguise(uint64_t p_NpcId) {
-    if (!m_InScene || m_PeerDisguiseLocks.contains(p_NpcId))
+    if (!m_InScene || p_NpcId == 0)
         return;
 
-    ZActor* s_Actor = FindNpc(p_NpcId);
+    // The outfit packet already identified the exact NPC whose disguise was
+    // stolen. Even if the actor has not spawned or fallen locally yet, keep
+    // that ID for a bounded retry of the missing visual strip.
+    if (!m_AppliedPeerDisguiseStrips.contains(p_NpcId) &&
+        (m_PendingPeerDisguiseStrips.contains(p_NpcId) ||
+         m_PendingPeerDisguiseStrips.size() < 64))
+        m_PendingPeerDisguiseStrips.try_emplace(p_NpcId, m_Now + 12.0);
 
+    ZActor* s_Actor = FindNpc(p_NpcId);
     if (!s_Actor || s_Actor == m_PartnerActor)
         return;
 
-    m_PeerDisguiseLocks[p_NpcId] = s_Actor->m_bBlockDisguisePickup;
-    s_Actor->m_bBlockDisguisePickup = true;
-    ZEntityRef s_Ref;
-    s_Actor->GetID(s_Ref);
-    s_Ref.SetProperty("m_bBlockDisguisePickup", true);
-    if (m_Trace)
-        m_Trace("disguise: body " + std::to_string(p_NpcId) + " used by partner; local pickup disabled");
+    if (!m_PeerDisguiseLocks.contains(p_NpcId)) {
+        m_PeerDisguiseLocks[p_NpcId] = s_Actor->m_bBlockDisguisePickup;
+        s_Actor->m_bBlockDisguisePickup = true;
+        ZEntityRef s_Ref;
+        s_Actor->GetID(s_Ref);
+        s_Ref.SetProperty("m_bBlockDisguisePickup", true);
+        if (m_Trace)
+            m_Trace("disguise: body " + std::to_string(p_NpcId) + " used by partner; local pickup disabled");
+    }
+    if (m_PendingPeerDisguiseStrips.contains(p_NpcId) && TryApplyPeerDisguiseStrip(p_NpcId))
+        m_PendingPeerDisguiseStrips.erase(p_NpcId);
 }
 
 ZTemplateEntityFactory* SdkWorld::PartnerTemplate(bool& p_Failed) {
@@ -2922,6 +2935,8 @@ void SdkWorld::ResetItems() {
         }
     }
     m_PeerDisguiseLocks.clear();
+    m_PendingPeerDisguiseStrips.clear();
+    m_AppliedPeerDisguiseStrips.clear();
     m_Items.clear();
 }
 
@@ -3105,6 +3120,35 @@ void SdkWorld::RememberBodyOutfit(Body& body, ZActor* actor) {
     body.outfitVariation = actor->m_nOutfitVariation;
 }
 
+bool SdkWorld::TryApplyPeerDisguiseStrip(uint64_t id) {
+    if (m_AppliedPeerDisguiseStrips.contains(id)) return true;
+    ZActor* actor = FindNpc(id);
+    // A remote costume change must never interrupt the local player's active
+    // takedown, or strip an NPC that is still standing in this simulation.
+    if (!actor || actor == m_PartnerActor || actor == m_LocalVictim || !ActorDown(actor))
+        return false;
+
+    // The outfit-source packet contains the body ID but not a kit. Use this
+    // NPC's existing kit: the native 'nude' argument selects its stripped body
+    // variation, rather than dressing it in an unrelated generic outfit.
+    const auto kit = actor->m_rOutfit;
+    const int32_t charset = actor->m_nOutfitCharset;
+    const int32_t variation = actor->m_nOutfitVariation;
+    if (!kit.m_pInterfaceRef || charset < 0 || variation < 0 || variation > 255 ||
+        static_cast<size_t>(charset) >= kit.m_pInterfaceRef->m_aCharSets.size())
+        return false;
+
+    m_ApplyingBodyOutfit = true; // Don't echo our synthetic visual change.
+    Functions::ZActor_SetOutfit->Call(actor, kit, charset, variation, true);
+    m_ApplyingBodyOutfit = false;
+    auto& body = m_Bodies[id];
+    if (body.downAt <= 0.0) body.downAt = m_Now;
+    RememberBodyOutfit(body, actor);
+    m_AppliedPeerDisguiseStrips.insert(id);
+    if (m_Trace) m_Trace("disguise: native visual strip applied to peer-used body " + std::to_string(id));
+    return true;
+}
+
 void SdkWorld::OnActorOutfitSet(ZActor* actor, ZGlobalOutfitKit* kit,
     int32_t charset, int32_t variation, bool nude) {
     if (m_ApplyingBodyOutfit || !m_InScene || !actor || actor == m_PartnerActor ||
@@ -3156,11 +3200,30 @@ void SdkWorld::ApplyPeerBodyOutfit(const std::string& data) {
     if (body.downAt <= 0.0) body.downAt = m_Now;
     RememberBodyOutfit(body, actor);
     m_PendingBodyOutfits.erase(id);
+    if (nude == 1) {
+        // If the native outfit event already stripped this body, the outfit-ID
+        // fallback must not request a second native rebuild of its skeleton.
+        m_AppliedPeerDisguiseStrips.insert(id);
+        m_PendingPeerDisguiseStrips.erase(id);
+    }
     if (m_Trace) m_Trace("body: partner changed clothing on " + std::to_string(id) +
         (nude ? " (stripped)" : ""));
 }
 
 void SdkWorld::CollectBodyChanges(std::vector<coop::ItemChange>& p_Out) {
+    // The peer outfit-source packet may beat this body's locally reflected
+    // knockdown state. Retry without sending new network messages or altering
+    // our local pickup behavior; never retry past the bounded deadline.
+    for (auto it = m_PendingPeerDisguiseStrips.begin(); it != m_PendingPeerDisguiseStrips.end();) {
+        if (m_Now >= it->second) {
+            if (m_Trace) m_Trace("disguise: visual strip expired waiting for body " + std::to_string(it->first));
+            it = m_PendingPeerDisguiseStrips.erase(it);
+            continue;
+        }
+        const uint64_t id = it->first;
+        ++it;
+        BlockPeerDisguise(id);
+    }
     if (m_NpcsById.empty())
         return;
 
