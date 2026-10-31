@@ -17,7 +17,8 @@ namespace coop {
 // 13: optional host room code and password checked before a peer can join.
 // 14: optional source NPC ID on outfit changes for shared corpse-disguise availability.
 // 15: victim stream explicitly marks dragging and can contain transforms without animation bones.
-constexpr uint32_t kProtocolVersion = 15;
+// 16: player state includes displayed held/back weapons; items include repository IDs for drop visuals.
+constexpr uint32_t kProtocolVersion = 16;
 
 constexpr uint16_t kDefaultPort = 47047;
 constexpr size_t kMaxPacketSize = 1200;
@@ -238,6 +239,7 @@ struct ItemChange {
     uint64_t id = 0;
     uint8_t flags = 0;
     Transform xf;
+    std::string repositoryId; // For optional cosmetic dropped-item fallback when IDs differ across PCs.
 
     bool Taken() const { return (flags & ItemFlag_Taken) != 0; }
 };
@@ -405,6 +407,9 @@ struct MsgPlayerState {
     uint32_t colour = 0;         // the colour they picked for themselves (0xRRGGBB), 0: the default
     PlayerStats stats;
     std::string heldItem;        // the item in their 47's hands (its repository id), empty: none
+    bool heldWeapon = false;     // tell the stand-in inventory attachment whether this is a firearm
+    std::string backItem;        // only a visibly mounted large item, empty: none
+    bool backWeapon = false;
 
     void Write(ByteWriter& w) const;
     bool Read(ByteReader& r);

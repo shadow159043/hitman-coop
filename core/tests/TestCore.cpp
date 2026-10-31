@@ -185,10 +185,16 @@ TEST(Protocol_RoundTripAll) {
         m.colour = 0x3080FF;
         m.flags |= PlayerFlag_Away;
         m.heldItem = "73875794-5A86-410E-84A4-1B5B2F7E5A54";
-        CHECK(Decode(Encode(m), o) && o == m && o.heldItem == m.heldItem);
+        m.heldWeapon = true;
+        m.backItem = "0a4ea2b1-4b4b-4e28-a5ad-d1a0c2dd2c7b";
+        m.backWeapon = true;
+        CHECK(Decode(Encode(m), o) && o == m && o.heldItem == m.heldItem && o.backItem == m.backItem);
         m.heldItem = std::string(65, 'x'); // longer than any repository id
         CHECK(!Decode(Encode(m), o));
         m.heldItem.clear();
+        m.backItem = std::string(65, 'b'); // also reject oversized back-item repositories
+        CHECK(!Decode(Encode(m), o));
+        m.backItem.clear();
         m.colour = 0x1000000;
         CHECK(!Decode(Encode(m), o));
         m.colour = 0;

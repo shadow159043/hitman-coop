@@ -286,14 +286,21 @@ public:
     std::string BodyTest(const std::string& p_Arg);
     // What the partner's 47 has in hand, in the stand-in's: a copy of it made here (by repository id)
     // and given to the stand-in the way the game gives NPCs their items, in its right hand.
-    void SetPartnerHeldItem(const std::string& p_RepositoryId);
-    // What our own 47 has in hand: its repository id, empty if nothing.
+    void SetPartnerHeldItem(const std::string& p_RepositoryId, bool p_Weapon = false);
+    void SetPartnerBackItem(const std::string& p_RepositoryId, bool p_Weapon = false);
+    // Repositories of visible items in 47's hand or attached on their back.
     std::string LocalHeldItem() const;
+    bool LocalHeldWeapon() const { LocalHeldItem(); return m_HeldIsWeapon; }
+    std::string LocalBackItem() const { LocalHeldItem(); return m_BackItem; }
+    bool LocalBackWeapon() const { LocalHeldItem(); return m_BackIsWeapon; }
     std::string HeldItemsTest() const;
     std::string StandInItemTest(const std::string& p_Arg);
     void UpdateStandInItem();
     void DropStandInItem();
     void OnStandInItemCreated(uint32_t p_Ticket, TEntityRef<IItemBase> p_Item);
+    void UpdateStandInBackItem();
+    void DropStandInBackItem();
+    void OnStandInBackItemCreated(uint32_t p_Ticket, TEntityRef<IItemBase> p_Item);
     std::string m_StandInItemWanted;
     std::string m_StandInItemShown; // what it holds, or was asked for (ticket pending)
     TEntityRef<IItem> m_StandInItem;
@@ -302,8 +309,18 @@ public:
     double m_StandInItemFailedAt = -100.0;
     int m_StandInAttach = 0; // EAttachLocation (test: other places)
     bool m_StandInWeapon = false;
+    std::string m_BackItemWanted;
+    std::string m_BackItemShown;
+    TEntityRef<IItem> m_StandInBackItem;
+    uint32_t m_StandInBackTicket = 0;
+    double m_StandInBackAskedAt = -1.0;
+    double m_StandInBackFailedAt = -100.0;
+    bool m_BackItemWeapon = false;
     mutable double m_HeldCheckAt = 0.0;
     mutable std::string m_HeldItem;
+    mutable bool m_HeldIsWeapon = false;
+    mutable std::string m_BackItem;
+    mutable bool m_BackIsWeapon = false;
     uint64_t m_ItemTestId = 0;
     coop::Transform m_ItemTestXf;
     // True for an event about an NPC we killed only to mirror the partner's game.
@@ -419,6 +436,13 @@ private:
     std::unordered_set<uint64_t> m_PeerHeldItems;
     // A peer can pick up an item before its entity spawns locally. Reapply it on later scans.
     std::unordered_map<uint64_t, coop::ItemChange> m_PendingPeerItems;
+    // Visual-only local echoes for player-dropped items whose IDs do not exist on this PC.
+    std::unordered_map<uint64_t, TEntityRef<IItem>> m_DroppedItemVisuals;
+    std::unordered_map<uint64_t, coop::ItemChange> m_DroppedItemRequests;
+    std::unordered_map<uint32_t, uint64_t> m_DroppedItemTickets;
+    void ShowPeerDroppedItem(const coop::ItemChange& p_Change);
+    void RemovePeerDroppedItem(uint64_t p_Id);
+    void OnPeerDroppedItemCreated(uint32_t p_Ticket, TEntityRef<IItemBase> p_Item);
     std::unordered_map<uint64_t, bool> m_PeerDisguiseLocks; // Original per-body pickup state to restore on disconnect.
     double m_NextItemScan = 0.0;
     class ZHM5Item* FindItem(uint64_t p_Id, ZEntityRef& p_Ref) const;

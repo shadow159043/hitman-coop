@@ -455,6 +455,9 @@ void MsgPlayerState::Write(ByteWriter& w) const {
         w.U16(s_Value);
 
     w.Str(heldItem);
+    w.U8(heldWeapon ? 1 : 0);
+    w.Str(backItem);
+    w.U8(backWeapon ? 1 : 0);
 }
 
 bool MsgPlayerState::Read(ByteReader& r) {
@@ -466,8 +469,12 @@ bool MsgPlayerState::Read(ByteReader& r) {
         if (!r.U16(*s_Value))
             return false;
 
-    if (!r.Str(heldItem, 64))
+    uint8_t s_HeldWeapon = 0, s_BackWeapon = 0;
+    if (!r.Str(heldItem, 64) || !r.U8(s_HeldWeapon) || !r.Str(backItem, 64) || !r.U8(s_BackWeapon) ||
+        s_HeldWeapon > 1 || s_BackWeapon > 1)
         return false;
+    heldWeapon = s_HeldWeapon != 0;
+    backWeapon = s_BackWeapon != 0;
 
     if ((flags & ~(PlayerFlag_Trespassing | PlayerFlag_EvidenceGone | PlayerFlag_Away)) || threat >= Threat_Count || menu > 32 || colour > 0xFFFFFF)
         return r.Fail();
@@ -489,10 +496,12 @@ void MsgItem::Write(ByteWriter& w) const {
     w.U64(change.id);
     w.U8(change.flags);
     WriteTransform(w, change.xf);
+    w.Str(change.repositoryId);
 }
 
 bool MsgItem::Read(ByteReader& r) {
-    return r.U32(epoch) && r.U64(change.id) && r.U8(change.flags) && ReadTransform(r, change.xf);
+    return r.U32(epoch) && r.U64(change.id) && r.U8(change.flags) &&
+        ReadTransform(r, change.xf) && r.Str(change.repositoryId, 64);
 }
 
 void MsgAlerts::Write(ByteWriter& w) const {

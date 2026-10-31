@@ -149,6 +149,9 @@ void SdkWorld::OnSceneCleared() {
     m_Items.clear();
     m_PeerHeldItems.clear();
     m_PendingPeerItems.clear();
+    m_DroppedItemVisuals.clear(); // Scene unload owns the created render entities.
+    m_DroppedItemTickets.clear();
+    m_DroppedItemRequests.clear();
     m_PeerDisguiseLocks.clear();
     m_Bodies.clear();
     m_PeerBodyMoveUntil.clear();
@@ -158,7 +161,14 @@ void SdkWorld::OnSceneCleared() {
     m_StandInItemShown.clear();
     m_StandInItemTicket = 0;
     m_StandInItemAskedAt = -1.0;
+    m_StandInBackItem = {};
+    m_StandInBackTicket = 0;
+    m_StandInBackAskedAt = -1.0;
+    m_BackItemShown.clear();
+    m_BackItemWanted.clear();
     m_HeldItem.clear();
+    m_BackItem.clear();
+    m_HeldIsWeapon = m_BackIsWeapon = false;
     m_Doors.clear();
     m_DoorsFound = false;
     m_DoorsSearchAt = 0.0;
@@ -660,6 +670,7 @@ void SdkWorld::UpdatePoses() {
     void* s_Target = nullptr;
 
     UpdateStandInItem();
+    UpdateStandInBackItem();
 
     if (m_InScene) {
         if (auto s_Player = SDK()->GetLocalPlayer())
@@ -2578,12 +2589,20 @@ void SdkWorld::CollectItemChanges(std::vector<coop::ItemChange>& p_Out) {
         if (m_PeerHeldItems.contains(p_Id))
             return;
 
-        const bool s_Ours = p_Item->m_pOwner == s_Player.m_entityRef;
         auto s_It = m_Items.find(p_Id);
+        bool s_Ours = p_Item->m_pOwner == s_Player.m_entityRef;
+        // Some dropped objects retain the previous m_pOwner briefly; when this
+        // actor has already tracked the item, an explicit Owned=false ends the hold.
+        if (s_Ours && s_It != m_Items.end() && s_It->second.ours &&
+            p_Item->m_rItemOwned.m_entityRef &&
+            !p_Item->m_rItemOwned.m_entityRef.GetProperty<bool>("m_bValue").Get())
+            s_Ours = false;
+        const std::string s_Repo = p_Item->m_pItemConfigDescriptor ?
+            p_Item->m_pItemConfigDescriptor->m_ItemID.ToString().c_str() : std::string();
 
         if (s_Ours && (s_It == m_Items.end() || !s_It->second.ours)) {
             m_Items[p_Id] = { true, 0.0, {} };
-            p_Out.push_back({ p_Id, coop::ItemFlag_Taken, {} });
+            p_Out.push_back({ p_Id, coop::ItemFlag_Taken, {}, s_Repo });
             return;
         }
 
@@ -2601,7 +2620,7 @@ void SdkWorld::CollectItemChanges(std::vector<coop::ItemChange>& p_Out) {
         // Let go of (dropped, placed, thrown): back in the world, followed while it moves.
         if (s_Tracked.ours) {
             s_Tracked = { false, m_Now + 4.0, s_Xf };
-            p_Out.push_back({ p_Id, 0, s_Xf });
+            p_Out.push_back({ p_Id, 0, s_Xf, s_Repo });
             return;
         }
 
@@ -2613,7 +2632,7 @@ void SdkWorld::CollectItemChanges(std::vector<coop::ItemChange>& p_Out) {
         if (coop::Distance(s_Xf.pos, s_Tracked.sent.pos) > 0.02f || coop::AngleBetween(s_Xf.rot, s_Tracked.sent.rot) > 0.02f) {
             s_Tracked.sent = s_Xf;
             s_Tracked.followUntil = std::max(s_Tracked.followUntil, m_Now + 1.0);
-            p_Out.push_back({ p_Id, 0, s_Xf });
+            p_Out.push_back({ p_Id, 0, s_Xf, s_Repo });
         }
     });
 }
@@ -2630,6 +2649,14 @@ void SdkWorld::ResetItems() {
 
     m_PeerHeldItems.clear();
     m_PendingPeerItems.clear();
+    for (auto& [s_Id, s_Item] : m_DroppedItemVisuals) {
+        if (s_Item && Globals::WorldInventory)
+            Functions::ZWorldInventory_DestroyItem->Call(Globals::WorldInventory,
+                TEntityRef<IItemBase>(s_Item.m_entityRef));
+    }
+    m_DroppedItemVisuals.clear();
+    m_DroppedItemTickets.clear();
+    m_DroppedItemRequests.clear();
     for (const auto& [s_Id, s_WasBlocked] : m_PeerDisguiseLocks) {
         if (ZActor* s_Actor = FindNpc(s_Id)) {
             s_Actor->m_bBlockDisguisePickup = s_WasBlocked;
@@ -2640,6 +2667,82 @@ void SdkWorld::ResetItems() {
     }
     m_PeerDisguiseLocks.clear();
     m_Items.clear();
+}
+
+void SdkWorld::RemovePeerDroppedItem(uint64_t p_Id) {
+    auto s_It = m_DroppedItemVisuals.find(p_Id);
+    if (s_It != m_DroppedItemVisuals.end()) {
+        if (s_It->second && Globals::WorldInventory)
+            Functions::ZWorldInventory_DestroyItem->Call(Globals::WorldInventory,
+                TEntityRef<IItemBase>(s_It->second.m_entityRef));
+        m_DroppedItemVisuals.erase(s_It);
+    }
+    m_DroppedItemRequests.erase(p_Id);
+}
+
+void SdkWorld::ShowPeerDroppedItem(const coop::ItemChange& p_Change) {
+    if (!m_InScene || p_Change.repositoryId.empty() || !Globals::WorldInventory)
+        return;
+
+    if (!m_DroppedItemRequests.contains(p_Change.id) && m_DroppedItemRequests.size() >= 96)
+        return; // Bound memory usage even if a peer generates many distinct dynamic drops.
+    m_DroppedItemRequests[p_Change.id] = p_Change;
+    auto s_Existing = m_DroppedItemVisuals.find(p_Change.id);
+    if (s_Existing != m_DroppedItemVisuals.end()) {
+        if (auto* s_Spatial = s_Existing->second.m_entityRef.QueryInterface<ZSpatialEntity>())
+            s_Spatial->SetObjectToWorldMatrixFromEditor(ToMatrix(p_Change.xf));
+        return;
+    }
+
+    for (const auto& [s_Ticket, s_Id] : m_DroppedItemTickets)
+        if (s_Id == p_Change.id)
+            return;
+    if (m_DroppedItemTickets.size() >= 24 || m_DroppedItemVisuals.size() >= 64 ||
+        !m_PartnerActor || !m_PartnerActor->m_pInventoryHandler)
+        return;
+
+    ZEntityRef s_ActorRef = m_PartnerActor->m_pInventoryHandler->m_rActor.m_entityRef;
+    if (!s_ActorRef)
+        return;
+    const uint64_t s_DynamicId = Functions::ZEntityManager_GenerateDynamicObjectID->Call(
+        Globals::EntityManager, s_ActorRef, EDynamicEntityType::eDET_CharacterInventoryItem, 0);
+    const ZMemberDelegate<SdkWorld, void(uint32_t, TEntityRef<IItemBase>)> s_Delegate(
+        this, &SdkWorld::OnPeerDroppedItemCreated);
+    const uint32_t s_Ticket = Functions::ZWorldInventory_RequestNewItem->Call(
+        Globals::WorldInventory, ZRepositoryID(ZString(p_Change.repositoryId)), s_Delegate,
+        s_DynamicId, false, {}, s_ActorRef);
+    if (s_Ticket == *Globals::WorldInventory_InvalidTicket) {
+        if (m_Trace)
+            m_Trace("item: cannot create visual drop for " + p_Change.repositoryId);
+        m_DroppedItemRequests.erase(p_Change.id);
+        return;
+    }
+    m_DroppedItemTickets[s_Ticket] = p_Change.id;
+}
+
+void SdkWorld::OnPeerDroppedItemCreated(uint32_t p_Ticket, TEntityRef<IItemBase> p_Item) {
+    const auto s_It = m_DroppedItemTickets.find(p_Ticket);
+    if (s_It == m_DroppedItemTickets.end())
+        return;
+    const uint64_t s_Id = s_It->second;
+    m_DroppedItemTickets.erase(s_It);
+    const auto s_Request = m_DroppedItemRequests.find(s_Id);
+    if (s_Request == m_DroppedItemRequests.end() || !m_InScene || !p_Item.m_entityRef)
+        return;
+
+    m_DroppedItemVisuals[s_Id] = TEntityRef<IItem>(p_Item.m_entityRef);
+    if (auto* s_Spatial = p_Item.m_entityRef.QueryInterface<ZSpatialEntity>())
+        s_Spatial->SetObjectToWorldMatrixFromEditor(ToMatrix(s_Request->second.xf));
+    if (auto* s_Item = p_Item.m_entityRef.QueryInterface<ZHM5Item>()) {
+        SetItemShown(s_Item, true);
+        // This is only a visual echo. It is not a second network-owned pickup.
+        if (s_Item->m_rItemPickupEnabled.m_entityRef)
+            s_Item->m_rItemPickupEnabled.m_entityRef.SetProperty("m_bValue", false);
+        if (s_Item->m_rItemInPhysicsWorld.m_entityRef)
+            s_Item->m_rItemInPhysicsWorld.m_entityRef.SetProperty("m_bValue", false);
+    }
+    if (m_Trace)
+        m_Trace("item: cosmetic world drop created for " + std::to_string(s_Id));
 }
 
 void SdkWorld::ApplyPeerItem(const coop::ItemChange& p_Change) {
@@ -2660,12 +2763,20 @@ void SdkWorld::ApplyPeerItem(const coop::ItemChange& p_Change) {
     ZHM5Item* s_Item = FindItem(p_Change.id, s_Ref);
 
     if (!s_Item) {
-        // Some items appear after the session starts; don't permanently lose the
-        // reliable pickup event just because the corresponding local item was late.
+        // Inventory-created drops may have a different dynamic entity ID on each PC.
+        // Show a cosmetic copy by repository ID rather than silently losing the drop.
+        if (!p_Change.Taken() && !p_Change.repositoryId.empty()) {
+            m_PendingPeerItems.erase(p_Change.id);
+            ShowPeerDroppedItem(p_Change);
+            return;
+        }
+        if (p_Change.Taken())
+            RemovePeerDroppedItem(p_Change.id);
         if (m_PendingPeerItems.size() < 256 || m_PendingPeerItems.contains(p_Change.id))
             m_PendingPeerItems[p_Change.id] = p_Change;
         return;
     }
+    RemovePeerDroppedItem(p_Change.id);
     m_PendingPeerItems.erase(p_Change.id);
 
     // Both took it at once: ours stays ours.
@@ -2869,17 +2980,26 @@ namespace {
 ZHM5Item* HeldBy(const ZEntityRef& p_Owner, ZEntityRef* p_Ref = nullptr) {
     ZHM5Item* s_Held = nullptr;
 
-    ForEachSceneItem([&](uint64_t, ZHM5Item* p_Item, const ZEntityRef& p_ItemRef) {
-        if (s_Held || p_Item->m_pOwner != p_Owner || !p_Item->m_rGeomentity.m_entityRef || !p_Item->m_pItemConfigDescriptor)
-            return;
+    // Inventory-created weapons often have repeated template IDs, so the scene-item
+    // iterator (which excludes duplicate IDs) misses them entirely. Visual selection
+    // is local-only; it does not require globally stable IDs.
+    if (!Globals::WorldInventory)
+        return nullptr;
 
-        if (p_Item->m_rGeomentity.m_entityRef.GetProperty<bool>("m_bVisible").Get()) {
-            s_Held = p_Item;
-
+    for (const auto& s_Entry : Globals::WorldInventory->m_aItems) {
+        if (!s_Entry.m_entityRef || !s_Entry.m_entityRef.GetEntity())
+            continue;
+        auto* s_Item = s_Entry.m_entityRef.QueryInterface<ZHM5Item>();
+        if (!s_Item || s_Item->m_pOwner != p_Owner || !s_Item->m_pItemConfigDescriptor ||
+            !s_Item->m_rGeomentity.m_entityRef)
+            continue;
+        if (s_Item->m_rGeomentity.m_entityRef.GetProperty<bool>("m_bVisible").Get()) {
+            s_Held = s_Item;
             if (p_Ref)
-                *p_Ref = p_ItemRef;
+                *p_Ref = s_Entry.m_entityRef;
+            break;
         }
-    });
+    }
 
     return s_Held;
 }
@@ -2892,11 +3012,42 @@ std::string SdkWorld::LocalHeldItem() const {
 
     m_HeldCheckAt = m_Now + 0.25;
     m_HeldItem.clear();
+    m_BackItem.clear();
+    m_HeldIsWeapon = m_BackIsWeapon = false;
     const auto s_Player = SDK()->GetLocalPlayer();
+    if (!m_InScene || !s_Player)
+        return m_HeldItem;
 
-    if (m_InScene && s_Player)
-        if (const ZHM5Item* s_Item = HeldBy(s_Player.m_entityRef))
-            m_HeldItem = s_Item->m_pItemConfigDescriptor->m_ItemID.ToString().c_str();
+    ZEntityRef s_HeldRef;
+    if (const ZHM5Item* s_Item = HeldBy(s_Player.m_entityRef, &s_HeldRef)) {
+        m_HeldItem = s_Item->m_pItemConfigDescriptor->m_ItemID.ToString().c_str();
+        m_HeldIsWeapon = s_HeldRef.QueryInterface<ZHM5ItemWeapon>() != nullptr;
+    }
+
+    // Large weapons on 47's back are independent of the gun in their hand. Only mirror
+    // a visibly attached, locally owned large item, never a hidden inventory slot.
+    if (Globals::WorldInventory) {
+        coop::Transform s_Local;
+        if (GetLocalAvatar(s_Local)) {
+            for (const auto& s_Entry : Globals::WorldInventory->m_aItems) {
+                const ZEntityRef s_Ref = s_Entry.m_entityRef;
+                if (!s_Ref || !s_Ref.GetEntity() || s_Ref == s_HeldRef)
+                    continue;
+                auto* s_Item = s_Ref.QueryInterface<ZHM5Item>();
+                if (!s_Item || s_Item->m_pOwner != s_Player.m_entityRef || !s_Item->m_pItemConfigDescriptor ||
+                    s_Item->m_pItemConfigDescriptor->m_ItemConfig.m_ItemSize != eItemSize::ITEMSIZE_LARGE ||
+                    !s_Item->m_rGeomentity.m_entityRef ||
+                    !s_Item->m_rGeomentity.m_entityRef.GetProperty<bool>("m_bVisible").Get())
+                    continue;
+                auto* s_Spatial = s_Ref.QueryInterface<ZSpatialEntity>();
+                if (!s_Spatial || coop::Distance(ToTransform(s_Spatial->GetObjectToWorldMatrix()).pos, s_Local.pos) > 1.7f)
+                    continue;
+                m_BackItem = s_Item->m_pItemConfigDescriptor->m_ItemID.ToString().c_str();
+                m_BackIsWeapon = s_Ref.QueryInterface<ZHM5ItemWeapon>() != nullptr;
+                break;
+            }
+        }
+    }
 
     return m_HeldItem;
 }
@@ -2931,8 +3082,18 @@ std::string SdkWorld::HeldItemsTest() const {
     return "held: " + std::to_string(s_Count) + " owned, in hand [" + LocalHeldItem() + "]" + s_Out;
 }
 
-void SdkWorld::SetPartnerHeldItem(const std::string& p_RepositoryId) {
+void SdkWorld::SetPartnerHeldItem(const std::string& p_RepositoryId, bool p_Weapon) {
+    if (m_StandInWeapon != p_Weapon && m_StandInItemShown == p_RepositoryId && !p_RepositoryId.empty())
+        DropStandInItem(); // Re-create with the correct weapon attachment semantics.
+    m_StandInWeapon = p_Weapon;
     m_StandInItemWanted = p_RepositoryId;
+}
+
+void SdkWorld::SetPartnerBackItem(const std::string& p_RepositoryId, bool p_Weapon) {
+    if (m_BackItemWeapon != p_Weapon && m_BackItemShown == p_RepositoryId && !p_RepositoryId.empty())
+        DropStandInBackItem();
+    m_BackItemWeapon = p_Weapon;
+    m_BackItemWanted = p_RepositoryId;
 }
 
 void SdkWorld::DropStandInItem() {
@@ -2955,6 +3116,9 @@ void SdkWorld::UpdateStandInItem() {
     // Hidden (out of the mission, or far off): nothing in its hands to give away.
     const std::string s_Want = m_PartnerHidden ? std::string() : m_StandInItemWanted;
 
+    // Do not finalize a weapon request while the back attachment is still pending.
+    if (m_StandInBackTicket)
+        return;
     // Asked for already: the copy is on its way (a few frames while its resource loads).
     if (m_StandInItemTicket && m_Now - m_StandInItemAskedAt < 5.0)
         return;
@@ -3028,6 +3192,86 @@ void SdkWorld::OnStandInItemCreated(uint32_t p_Ticket, TEntityRef<IItemBase> p_I
 
     if (m_Trace)
         m_Trace("held item: " + m_StandInItemShown + " in the stand-in's hand");
+}
+
+void SdkWorld::DropStandInBackItem() {
+    if (m_StandInBackItem && m_PartnerActor && Globals::WorldInventory) {
+        m_PartnerActor->ReleaseItem(m_StandInBackItem, false);
+        Functions::ZWorldInventory_DestroyItem->Call(Globals::WorldInventory,
+            TEntityRef<IItemBase>(m_StandInBackItem.m_entityRef));
+    }
+    m_StandInBackItem = {};
+    m_BackItemShown.clear();
+}
+
+void SdkWorld::UpdateStandInBackItem() {
+    if (!m_InScene || !m_PartnerActor || !m_PartnerActor->m_pInventoryHandler || !Globals::WorldInventory)
+        return;
+
+    const std::string s_Want = m_PartnerHidden ? std::string() : m_BackItemWanted;
+    // Avoid finalizing two asynchronous pending inventory requests simultaneously.
+    if (m_StandInItemTicket)
+        return;
+    if (m_StandInBackTicket && m_Now - m_StandInBackAskedAt < 5.0)
+        return;
+
+    m_StandInBackTicket = 0;
+    if (s_Want == m_BackItemShown)
+        return;
+    DropStandInBackItem();
+    if (s_Want.empty() || m_Now - m_StandInBackFailedAt < 10.0)
+        return;
+
+    ZEntityRef s_ActorRef = m_PartnerActor->m_pInventoryHandler->m_rActor.m_entityRef;
+    if (!s_ActorRef)
+        return;
+
+    const uint64_t s_DynamicId = Functions::ZEntityManager_GenerateDynamicObjectID->Call(
+        Globals::EntityManager, s_ActorRef, EDynamicEntityType::eDET_CharacterInventoryItem, 0);
+    const ZMemberDelegate<SdkWorld, void(uint32_t, TEntityRef<IItemBase>)> s_Delegate(
+        this, &SdkWorld::OnStandInBackItemCreated);
+    const uint32_t s_Ticket = Functions::ZWorldInventory_RequestNewItem->Call(
+        Globals::WorldInventory, ZRepositoryID(ZString(s_Want)), s_Delegate, s_DynamicId,
+        false, {}, s_ActorRef);
+    if (s_Ticket == *Globals::WorldInventory_InvalidTicket) {
+        m_StandInBackFailedAt = m_Now;
+        if (m_Trace)
+            m_Trace("back item: can't create " + s_Want + " in this mission");
+        return;
+    }
+
+    ZActorInventoryHandler::SPendingItemInfo s_Pending;
+    s_Pending.m_nTicket = s_Ticket;
+    s_Pending.m_eAttachLocation = m_BackItemWeapon ? EAttachLocation::eALRifle : EAttachLocation::eALBack;
+    s_Pending.m_eMaxTension = EGameTension::EGT_Undefined;
+    s_Pending.m_bLeftHand = false;
+    // A visual prop on the back is not the stand-in NPC's active combat weapon.
+    s_Pending.m_bWeapon = false;
+    m_PartnerActor->m_pInventoryHandler->m_aPendingItems.push_back(s_Pending);
+    m_StandInBackTicket = s_Ticket;
+    m_StandInBackAskedAt = m_Now;
+    m_BackItemShown = s_Want;
+    if (m_Trace)
+        m_Trace("back item: requested " + s_Want);
+}
+
+void SdkWorld::OnStandInBackItemCreated(uint32_t p_Ticket, TEntityRef<IItemBase> p_Item) {
+    if (!m_PartnerActor || !m_PartnerActor->m_pInventoryHandler || p_Ticket != m_StandInBackTicket)
+        return;
+    for (auto& s_Pending : m_PartnerActor->m_pInventoryHandler->m_aPendingItems) {
+        if (s_Pending.m_nTicket == p_Ticket) {
+            s_Pending.m_rItem = TEntityRef<IItem>(p_Item.m_entityRef);
+            m_StandInBackItem = s_Pending.m_rItem;
+            break;
+        }
+    }
+    Functions::ZActorInventoryHandler_FinalizePendingItems->Call(m_PartnerActor->m_pInventoryHandler);
+    m_StandInBackTicket = 0;
+    if (auto* s_Item = p_Item.m_entityRef.QueryInterface<ZHM5Item>())
+        if (s_Item->m_rItemPickupEnabled.m_entityRef)
+            s_Item->m_rItemPickupEnabled.m_entityRef.SetProperty("m_bValue", false);
+    if (m_Trace)
+        m_Trace("back item: mounted on stand-in " + m_BackItemShown);
 }
 
 std::string SdkWorld::StandInItemTest(const std::string& p_Arg) {

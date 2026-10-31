@@ -759,13 +759,15 @@ void HitmanCoop::DrawPlayTab(const coop::SessionStatus& p_Status, bool p_InMissi
             if (!m_TailscaleAddress.empty())
                 ImGui::TextDisabled("Tailscale: %s", Hide(m_TailscaleAddress).c_str());
 
+            ImGui::TextDisabled("Your room code");
             ImGui::SetNextItemWidth(-FLT_MIN);
-            ImGui::InputText("Room code", m_RoomCodeBuffer, sizeof(m_RoomCodeBuffer), ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank);
+            ImGui::InputTextWithHint("##ArturRoomCode", "Enter a code (e.g. ARTUR123)", m_RoomCodeBuffer, sizeof(m_RoomCodeBuffer), ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank);
             if (ImGui::SmallButton("Generate new code")) m_RoomCodeBuffer[0] = '\0';
             ImGui::Checkbox("Require a password", &m_UseRoomPassword);
             if (m_UseRoomPassword) {
+                ImGui::TextDisabled("Room password");
                 ImGui::SetNextItemWidth(-FLT_MIN);
-                ImGui::InputText("Room password", m_RoomPasswordBuffer, sizeof(m_RoomPasswordBuffer), ImGuiInputTextFlags_Password);
+                ImGui::InputTextWithHint("##ArturHostRoomPassword", "Create a room password", m_RoomPasswordBuffer, sizeof(m_RoomPasswordBuffer), ImGuiInputTextFlags_Password);
             }
             const std::string s_Room = m_RoomCodeBuffer;
             const bool s_RoomValid = s_Room.size() >= 4 && s_Room.size() <= 16 &&
@@ -790,29 +792,63 @@ void HitmanCoop::DrawPlayTab(const coop::SessionStatus& p_Status, bool p_InMissi
 
             ImGui::TableNextColumn();
             SectionTitle(ICON_MD_LOGIN " Join a friend");
+            ImGui::TextDisabled("Host address or relay code");
             ImGui::SetNextItemWidth(-FLT_MIN);
-            ImGui::InputTextWithHint("##HitmanCoopAddress", "Friend's IP, Tailscale IP or relay join code", m_AddressBuffer, sizeof(m_AddressBuffer),
+            ImGui::InputTextWithHint("##HitmanCoopAddress", "IP (e.g. 100.x.x.x:47047) or join code", m_AddressBuffer, sizeof(m_AddressBuffer),
                 m_Streamer ? ImGuiInputTextFlags_Password : 0);
 
-            if (ImGui::Button(ICON_MD_CONTENT_PASTE " Paste")) {
-                // The code from a chat message, without its spaces.
+            if (ImGui::Button(ICON_MD_CONTENT_PASTE " Paste address / invite")) {
                 if (const char* s_Clip = ImGui::GetClipboardText()) {
-                    std::string s_Clean;
-
-                    for (const char* c = s_Clip; *c && s_Clean.size() + 1 < sizeof(m_AddressBuffer); ++c)
-                        if (static_cast<unsigned char>(*c) > 0x20)
-                            s_Clean += *c;
-
-                    strncpy_s(m_AddressBuffer, s_Clean.c_str(), _TRUNCATE);
+                    const std::string s_Text(s_Clip);
+                    const auto s_Field = [&](const char* p_Label) -> std::string {
+                        const size_t s_Start = s_Text.find(p_Label);
+                        if (s_Start == std::string::npos)
+                            return {};
+                        const size_t s_ValueStart = s_Start + std::strlen(p_Label);
+                        const size_t s_End = s_Text.find_first_of("\r\n", s_ValueStart);
+                        std::string s_Value = s_Text.substr(s_ValueStart, s_End - s_ValueStart);
+                        while (!s_Value.empty() && (s_Value.front() == ' ' || s_Value.front() == '\t'))
+                            s_Value.erase(s_Value.begin());
+                        while (!s_Value.empty() && (s_Value.back() == ' ' || s_Value.back() == '\t'))
+                            s_Value.pop_back();
+                        return s_Value;
+                    };
+                    const std::string s_Tailscale = s_Field("Tailscale IP:");
+                    const std::string s_Lan = s_Field("Same-network IP:");
+                    const std::string s_Relay = s_Field("Relay join code:");
+                    if (!s_Tailscale.empty() || !s_Lan.empty() || !s_Relay.empty()) {
+                        std::string s_Address = !s_Tailscale.empty() ? s_Tailscale :
+                            (!s_Lan.empty() ? s_Lan : s_Relay);
+                        if (const auto s_Note = s_Address.find(" ("); s_Note != std::string::npos)
+                            s_Address.resize(s_Note);
+                        strncpy_s(m_AddressBuffer, s_Address.c_str(), _TRUNCATE);
+                        const std::string s_Room = s_Field("Room code:");
+                        if (!s_Room.empty())
+                            strncpy_s(m_JoinRoomCodeBuffer, s_Room.c_str(), _TRUNCATE);
+                        const std::string s_Password = s_Field("Room password:");
+                        strncpy_s(m_JoinPasswordBuffer, s_Password.c_str(), _TRUNCATE);
+                    } else {
+                        // A single IP or relay code pasted without the full invite.
+                        std::string s_Clean;
+                        for (const char* c = s_Clip; *c && s_Clean.size() + 1 < sizeof(m_AddressBuffer); ++c)
+                            if (static_cast<unsigned char>(*c) > 0x20)
+                                s_Clean += *c;
+                        strncpy_s(m_AddressBuffer, s_Clean.c_str(), _TRUNCATE);
+                    }
                 }
             }
 
+            ImGui::TextDisabled("Room code");
             ImGui::SetNextItemWidth(-FLT_MIN);
-            ImGui::InputText("Friend's room code", m_JoinRoomCodeBuffer, sizeof(m_JoinRoomCodeBuffer), ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank);
+            ImGui::InputTextWithHint("##ArturJoinRoomCode", "Enter your friend's room code", m_JoinRoomCodeBuffer, sizeof(m_JoinRoomCodeBuffer), ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank);
+            ImGui::TextDisabled("Password (only if required)");
             ImGui::SetNextItemWidth(-FLT_MIN);
-            ImGui::InputText("Friend's room password (if needed)", m_JoinPasswordBuffer, sizeof(m_JoinPasswordBuffer), ImGuiInputTextFlags_Password);
+            ImGui::InputTextWithHint("##ArturJoinPassword", "Enter room password (optional)", m_JoinPasswordBuffer, sizeof(m_JoinPasswordBuffer), ImGuiInputTextFlags_Password);
             ImGui::TextDisabled("Direct rooms need the host IP and room code.");
-            if (WideButton(ICON_MD_LOGIN " JOIN", 0.f) && m_AddressBuffer[0] != '\0') {
+            if (m_AddressBuffer[0] == '\0' || m_JoinRoomCodeBuffer[0] == '\0')
+                ImGui::TextDisabled("Enter the host address and room code to join.");
+            ImGui::BeginDisabled(m_AddressBuffer[0] == '\0' || m_JoinRoomCodeBuffer[0] == '\0');
+            if (WideButton(ICON_MD_LOGIN " JOIN", 0.f)) {
                 RememberJoin(m_AddressBuffer);
                 SaveSettings();
                 Command s_Join { Command::Kind::Join, m_AddressBuffer, 0, m_NameBuffer, m_RelayBuffer };
@@ -820,6 +856,7 @@ void HitmanCoop::DrawPlayTab(const coop::SessionStatus& p_Status, bool p_InMissi
                 s_Join.roomPassword = m_JoinPasswordBuffer;
                 PushCommand(s_Join);
             }
+            ImGui::EndDisabled();
 
             if (!m_RecentJoins.empty()) {
                 ImGui::TextDisabled("Recent:");

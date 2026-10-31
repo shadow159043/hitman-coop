@@ -710,6 +710,10 @@ TEST(Session_PlayerStateReachesThePartner) {
     s_State.flags = PlayerFlag_Trespassing;
     s_State.threat = Threat_Hunted;
     s_State.menu = 4;
+    s_State.heldItem = "73875794-5A86-410E-84A4-1B5B2F7E5A54";
+    s_State.heldWeapon = true;
+    s_State.backItem = "0a4ea2b1-4b4b-4e28-a5ad-d1a0c2dd2c7b";
+    s_State.backWeapon = true;
     s_State.stats.kills = 2;
     s_State.stats.targets = 1;
     d.host.SetLocalPlayerState(s_State);
@@ -1290,11 +1294,13 @@ TEST(Session_ItemChangesReachPeer) {
 
     ItemChange s_Dropped { 0x42, 0, {} };
     s_Dropped.xf.pos = { 3.f, 4.f, 0.5f };
+    s_Dropped.repositoryId = "73875794-5A86-410E-84A4-1B5B2F7E5A54";
     d.hostWorld.itemChanges.push_back(s_Dropped);
     d.Step(0.5);
     REQUIRE(d.clientWorld.peerItems.size() == 1);
     CHECK(!d.clientWorld.peerItems[0].Taken());
     CHECK(Distance(d.clientWorld.peerItems[0].xf.pos, s_Dropped.xf.pos) < 0.01f);
+    CHECK(d.clientWorld.peerItems[0].repositoryId == s_Dropped.repositoryId);
 }
 
 TEST(Session_SkeletonSentOnceAndOnChange) {

@@ -855,6 +855,9 @@ void HitmanCoop::UpdatePlayerState() {
 
     s_State.colour = m_ColourSetting;
     s_State.heldItem = m_World.LocalHeldItem();
+    s_State.heldWeapon = m_World.LocalHeldWeapon();
+    s_State.backItem = m_World.LocalBackItem();
+    s_State.backWeapon = m_World.LocalBackWeapon();
     m_Session->SetLocalPlayerState(s_State);
 }
 
@@ -1312,7 +1315,11 @@ void HitmanCoop::OnFrameUpdate(const SGameUpdateEvent& p_UpdateEvent) {
 
         if (s_Held != m_PartnerHeldTold) {
             m_PartnerHeldTold = s_Held;
-            m_World.SetPartnerHeldItem(s_Held);
+            m_World.SetPartnerHeldItem(s_Held, m_FrameStatus.synced && m_FrameStatus.peerStateKnown &&
+        m_FrameStatus.peerState.heldWeapon);
+    m_World.SetPartnerBackItem(m_FrameStatus.synced && m_FrameStatus.peerStateKnown ?
+        m_FrameStatus.peerState.backItem : std::string(), m_FrameStatus.synced &&
+        m_FrameStatus.peerStateKnown && m_FrameStatus.peerState.backWeapon);
         }
     }
 
