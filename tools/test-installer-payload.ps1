@@ -1,5 +1,5 @@
 # Inspect a built setup without running INSTALL or modifying the game.
-param([string]$SetupPath = (Join-Path $PSScriptRoot "..\_dist\HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.17-ITEM-VISIBILITY-FIX.exe"))
+param([string]$SetupPath = (Join-Path $PSScriptRoot "..\_dist\HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.17.1-ITEM-CHILD-VISIBILITY.exe"))
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -40,7 +40,7 @@ Write-Output "PASS: Embedded SDK matches verified v4.2.1 release"
     }
     Write-Output ("PASS: Embedded installer detected HITMAN: " + ($Actual -join "; "))
 
-    $Zip = Join-Path $Root "_dist\HitmanCoop-0.12.17-3290-sdk421-EXPERIMENTAL-R2.17-ITEM-VISIBILITY-FIX.zip"
+    $Zip = Join-Path $Root "_dist\HitmanCoop-0.12.18-3290-sdk421-EXPERIMENTAL-R2.17.1-ITEM-CHILD-VISIBILITY.zip"
     $Archive = [IO.Compression.ZipFile]::OpenRead($Zip)
     try {
         $Plugin = @($Archive.Entries | Where-Object { $_.FullName -match '(?i)[\\/]Retail[\\/]mods[\\/]HitmanCoop.dll$' }) | Select-Object -First 1
@@ -52,7 +52,7 @@ Write-Output "PASS: Embedded SDK matches verified v4.2.1 release"
         if ($ActualHash -ne (Get-FileHash $OriginalDll).Hash) {throw "R2.2 ZIP does not match compiled plugin"}
     }
     finally { $Archive.Dispose() }
-    Write-Output "PASS: R2.17 item visibility ZIP has the identical branded plugin"
+    Write-Output "PASS: R2.17.1 child geometry visibility ZIP has the identical branded plugin"
     Write-Output "PASS: All package checks completed; no game files changed"
 }
 finally {

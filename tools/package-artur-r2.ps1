@@ -11,7 +11,7 @@ $NetTest = Join-Path $Root "_build-sdk421\core\RelWithDebInfo\HitmanCoop-NetTest
 $NewDll = Join-Path $Root "_build-sdk421\plugin\RelWithDebInfo\HitmanCoop.dll"
 $Stage = Join-Path $OutDir "_artur-r2-stage"
 $Payload = Join-Path $OutDir "_artur-r2-payload.zip"
-$Setup = Join-Path $OutDir "HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.17-ITEM-VISIBILITY-FIX.exe"
+$Setup = Join-Path $OutDir "HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.17.1-ITEM-CHILD-VISIBILITY.exe"
 $Csc = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 $Fx = Split-Path $Csc
 foreach ($f in @((Join-Path $R2 "Retail\mods\HitmanCoop.dll"), (Join-Path $R2 "Retail\ZHMModSDK.dll"), $NetTest, $NewDll, $Csc)) {
@@ -33,7 +33,7 @@ Copy-Item $NetTest (Join-Path $Stage "Test-Connection.exe")
 Copy-Item (Join-Path $R2 "HITMAN-COOP-LICENSE.txt") (Join-Path $Stage "LICENSE.txt")
 Copy-Item (Join-Path $R2 "SDK-LICENSE.txt") (Join-Path $Stage "SDK-LICENSE.txt")
 Copy-Item (Join-Path $R2 "READ-ME-FIRST.txt") (Join-Path $Stage "READ-ME-FIRST.txt")
-$ReadmeIntro = "R2.17 ITEM VISIBILITY FIX PREVIEW, Artur Edition v0.12.17/protocol16, HITMAN 3.290.1.0, official SDK4.2.1. R2.16 already synchronizes item ownership/pickup blocking but scene item models remain rendered remotely. R2.17 adds reversible native root and item-geometry render flag overrides on top of the existing reflected visibility switches, reapplies at the existing 100ms inventory scan, and restores original flags on drop/leave. Emits item visibility native-hide diagnostics so we can identify models with independent render meshes. This is experimental, visually unverified in two live games. Steam invites, NPC surrender, friendly fire, fistfights, body dragging, disguises and all other R2.16 behavior are unchanged. Both players must run R2.17 / mod v0.12.17. Preserve R2.16 for rollback. Original HITMAN Co-op created by Jordan Rodrigues, GPL-3.0-or-later."
+$ReadmeIntro = "R2.17.1 ITEM CHILD GEOMETRY VISIBILITY TEST, Artur Edition v0.12.18 protocol16, HITMAN 3.290.1.0, SDK4.2.1. Both main-PC and laptop R2.17 logs showed the same item pickup/hide events and the same plugin binary, but laptop still drew a model when main PC picked items up. Both clients resolved item root and two geometry refs to just one node. This isolated experimental patch additionally hides bounded descendants in the item spatial-transform tree while preserving original visibility flags and restoring them on drop/leave; it adds logs with spatial nodes/direct/children counts. Body, disguise, Steam invites, surrender, combat, networking and all non-item behavior are unchanged. Experimental/not yet verified in live two-player HITMAN. Install identical v0.12.18 on both PCs. R2.17 preserved for rollback. Original HITMAN Co-op by Jordan Rodrigues, GPL-3.0-or-later."
 $ReadmeOriginal = Get-Content (Join-Path $Stage "READ-ME-FIRST.txt") -Raw
 Set-Content (Join-Path $Stage "READ-ME-FIRST.txt") -Value ($ReadmeIntro + [Environment]::NewLine + $ReadmeOriginal) -Encoding UTF8
 Copy-Item (Join-Path $R2 "NATIVE-AUDIT.md") (Join-Path $Stage "NATIVE-AUDIT.md")
@@ -62,7 +62,7 @@ if ($Installer -notmatch 'requires HITMAN 3.290.1' -or $Installer -notmatch 'Ass
 }
 Set-Content -Path (Join-Path $Stage "installer.ps1") -Value $Installer -Encoding UTF8
 
-$R21 = Join-Path $OutDir "HitmanCoop-0.12.17-3290-sdk421-EXPERIMENTAL-R2.17-ITEM-VISIBILITY-FIX"
+$R21 = Join-Path $OutDir "HitmanCoop-0.12.18-3290-sdk421-EXPERIMENTAL-R2.17.1-ITEM-CHILD-VISIBILITY"
 $Zip21 = "$R21.zip"
 Remove-Item $R21,$Zip21 -Recurse -Force -ErrorAction SilentlyContinue
 Copy-Item -Path $R2 -Destination $R21 -Recurse
@@ -76,7 +76,7 @@ Set-Content (Join-Path $R21 "SHA256SUMS.txt") -Value $checks -Encoding ascii
 Compress-Archive -Path $R21 -DestinationPath $Zip21 -CompressionLevel Optimal -Force
 $ZipHash = (Get-FileHash -Algorithm SHA256 $Zip21).Hash.ToLowerInvariant()
 Set-Content "$Zip21.sha256" "$ZipHash  $(Split-Path -Leaf $Zip21)"
-Write-Host "R2.17 ITEM-VISIBILITY FIX ZIP: $Zip21"
+Write-Host "R2.17.1 ITEM CHILD VISIBILITY TEST ZIP: $Zip21"
 Compress-Archive -Path (Join-Path $Stage "*") -DestinationPath $Payload -CompressionLevel Optimal -Force
 $Icon = Join-Path $Root "installer\setup\setup.ico"
 $Manifest = Join-Path $Root "installer\setup\setup.manifest"
@@ -87,5 +87,5 @@ $Hash = (Get-FileHash -Algorithm SHA256 $Setup).Hash.ToLowerInvariant()
 Set-Content -Path "$Setup.sha256" -Value "$Hash  $(Split-Path $Setup -Leaf)"
 Write-Host "OUTPUT: $Setup"
 Write-Host "SHA256: $Hash"
-Write-Host "NOTE: R2.17 native scene-item visibility only; both players need v0.12.17 with SDK4.2.1, protocol16. Other features unchanged."
+Write-Host "NOTE: R2.17.1 item child geometry experimental, same v0.12.18 protocol16 and SDK4.2.1 on both PCs; no other gameplay changes."
 Remove-Item $Stage,$Payload -Recurse -Force

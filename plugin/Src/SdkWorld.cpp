@@ -2632,46 +2632,56 @@ void SetItemShown(ZHM5Item* p_Item, bool p_Shown, ZEntityRef p_Root = {}) {
 void SdkWorld::SetPeerItemVisible(uint64_t id, ZHM5Item* item,
                                    const ZEntityRef& ref, bool visible) {
     if (!item) return;
-    ZSpatialEntity* parts[] = {
+    // On both tested machines the item root and both SDK geometry references
+    // resolve to the *same* spatial node. The rendered mesh may instead live
+    // on a child spatial entity. Walk only this item's own transform subtree;
+    // never traverse its parent or a sibling of the item itself.
+    std::vector<ZSpatialEntity*> parts;
+    parts.reserve(64);
+    const std::array<ZSpatialEntity*, 3> roots = {
         ref.QueryInterface<ZSpatialEntity>(),
         item->m_rGeomentity.m_pInterfaceRef,
         item->m_pGeomEntity.m_pInterfaceRef
     };
+    for (ZSpatialEntity* root : roots) {
+        if (root && std::find(parts.begin(), parts.end(), root) == parts.end())
+            parts.push_back(root);
+    }
+    const size_t directNodes = parts.size();
+    parts = coop::item_visibility::CollectItemNodes(std::move(parts),
+        [](ZSpatialEntity* n) { return n->m_pTransformChildren; },
+        [](ZSpatialEntity* n) { return n->m_pTransformNext; },
+        [](ZSpatialEntity* n) { return n->m_pTransformParent; });
     if (!visible && !m_ItemVisualBackups.contains(id) &&
         m_ItemVisualBackups.size() >= 512)
         return; // Don't keep unbounded render overrides from a modified peer.
 
+    if (visible && !m_ItemVisualBackups.contains(id)) {
+        SetItemShown(item, true, ref);
+        return;
+    }
     auto& backup = m_ItemVisualBackups[id];
     // Snapshot MUST happen before reflection-driven SetProperty calls;
     // otherwise the backup may capture the already-hidden state.
-    int nodes = 0;
-    for (size_t i=0; i<3; ++i) {
-        ZSpatialEntity* part=parts[i];
-        if (!part) continue;
-        bool duplicate=false;
-        for (size_t j=0;j<i;++j)
-            if (parts[j]==part) { duplicate=true; break; }
-        if (duplicate) continue;
-        ++nodes;
-        auto& saved=backup.parts[i];
+    for (ZSpatialEntity* part : parts) {
+        auto saved = std::find_if(backup.parts.begin(), backup.parts.end(),
+            [part](const ItemVisualBackup::Part& node) { return node.identity == part; });
         if (!visible) {
             // Never dereference a stored pointer; the world can respawn items.
-            if (saved.identity != part) {
-                saved.identity=part;
-                saved.visible=part->m_bVisible;
-                saved.parentHidden=part->m_bParentHidden;
-                saved.forceVisible=part->m_bForceVisible;
+            // A newly-created child receives a new snapshot on the next scan.
+            if (saved == backup.parts.end()) {
+                if (backup.parts.size() >= 128) continue;
+                backup.parts.push_back({ part, bool(part->m_bVisible),
+                    bool(part->m_bParentHidden), bool(part->m_bForceVisible) });
             }
-            const auto hidden=coop::item_visibility::Hidden();
-            part->m_bVisible=hidden.visible;
-            part->m_bParentHidden=hidden.parentHidden;
-            part->m_bForceVisible=hidden.forceVisible;
-        } else if (saved.identity == part) {
-            // Preserve initial visibility: some items are hidden by scripts
-            // even when present in the inventory list.
-            part->m_bVisible=saved.visible;
-            part->m_bParentHidden=saved.parentHidden;
-            part->m_bForceVisible=saved.forceVisible;
+            const auto hidden = coop::item_visibility::Hidden();
+            part->m_bVisible = hidden.visible;
+            part->m_bParentHidden = hidden.parentHidden;
+            part->m_bForceVisible = hidden.forceVisible;
+        } else if (saved != backup.parts.end()) {
+            part->m_bVisible = saved->visible;
+            part->m_bParentHidden = saved->parentHidden;
+            part->m_bForceVisible = saved->forceVisible;
         }
     }
     if (!visible) {
@@ -2689,22 +2699,22 @@ void SdkWorld::SetPeerItemVisible(uint64_t id, ZHM5Item* item,
         if (m_Trace && !m_LoggedItemVisuals.contains(id)) {
             m_LoggedItemVisuals.insert(id);
             m_Trace("item visibility: native hide id=" + std::to_string(id) +
-                " spatial nodes=" + std::to_string(nodes) +
-                " root=" + std::to_string(parts[0]!=nullptr) +
-                " geom1=" + std::to_string(parts[1]!=nullptr) +
-                " geom2=" + std::to_string(parts[2]!=nullptr));
+                " spatial nodes=" + std::to_string(parts.size()) +
+                " direct=" + std::to_string(directNodes) +
+                " children=" + std::to_string(parts.size() - directNodes) +
+                (parts.size() >= 64 ? " (limit)" : ""));
         }
     } else {
         // First restore the item-level scene switches, then its spatial flags.
         // Direct spatial restore happens *after* the reflection-driven write.
         SetItemShown(item, true, ref);
-        for (size_t i=0;i<3;++i) {
-            ZSpatialEntity* part=parts[i];
-            const auto& saved=backup.parts[i];
-            if (!part || saved.identity!=part) continue;
-            part->m_bVisible=saved.visible;
-            part->m_bParentHidden=saved.parentHidden;
-            part->m_bForceVisible=saved.forceVisible;
+        for (ZSpatialEntity* part : parts) {
+            auto saved = std::find_if(backup.parts.begin(), backup.parts.end(),
+                [part](const ItemVisualBackup::Part& node) { return node.identity == part; });
+            if (saved == backup.parts.end()) continue;
+            part->m_bVisible = saved->visible;
+            part->m_bParentHidden = saved->parentHidden;
+            part->m_bForceVisible = saved->forceVisible;
         }
         m_ItemVisualBackups.erase(id);
         m_LoggedItemVisuals.erase(id);

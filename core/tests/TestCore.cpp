@@ -18,6 +18,36 @@
 
 using namespace coop;
 
+TEST(ItemVisibility_ChildTraversalDoesNotHideUnrelatedWorldObjects) {
+    struct Node { Node* child = nullptr; Node* next = nullptr; Node* parent = nullptr; };
+    Node root, childA, childB, grandChild, unrelated;
+    root.child = &childA;
+    childA.parent = &root;
+    childA.next = &childB;
+    childA.child = &grandChild;
+    childB.parent = &root;
+    grandChild.parent = &childA;
+    childB.next = &unrelated;
+    unrelated.parent = nullptr; // never traverse into unrelated sibling
+    auto walk = [](std::vector<Node*> roots, size_t limit) {
+        return item_visibility::CollectItemNodes(std::move(roots),
+            [](Node* n) { return n->child; },
+            [](Node* n) { return n->next; },
+            [](Node* n) { return n->parent; }, limit);
+    };
+    const auto nodes = walk({&root}, 64);
+    CHECK(nodes.size() == 4);
+    CHECK(std::find(nodes.begin(), nodes.end(), &root) != nodes.end());
+    CHECK(std::find(nodes.begin(), nodes.end(), &childA) != nodes.end());
+    CHECK(std::find(nodes.begin(), nodes.end(), &childB) != nodes.end());
+    CHECK(std::find(nodes.begin(), nodes.end(), &grandChild) != nodes.end());
+    CHECK(std::find(nodes.begin(), nodes.end(), &unrelated) == nodes.end());
+    CHECK(walk({&root}, 2).size() == 2);
+    CHECK(walk({&root}, 0).empty());
+    childB.next = &childA; // malformed sibling cycle stays bounded
+    CHECK(walk({&root}, 64).size() == 4);
+}
+
 TEST(ItemVisibility_NativeSpatialFlagsAreReversible) {
     const item_visibility::Flags alreadyHidden {false, true, false};
     const item_visibility::Flags initiallyVisible {true, false, true};

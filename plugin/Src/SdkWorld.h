@@ -462,9 +462,9 @@ private:
     };
     std::unordered_map<uint64_t, TrackedItem> m_Items;
     std::unordered_set<uint64_t> m_PeerHeldItems;
-    // Saves native spatial render flags (root + two geometry refs) while
-    // another player holds an item. No raw pointer is dereferenced later;
-    // each restore re-resolves the currently live item entity first.
+    // Saves native spatial render flags for the item and its transform-tree
+    // children. No stored pointer is dereferenced on restore; live nodes are
+    // re-resolved from the current item entity and matched by identity.
     struct ItemVisualBackup {
         struct Part {
             const void* identity = nullptr;
@@ -472,7 +472,7 @@ private:
             bool parentHidden = false;
             bool forceVisible = false;
         };
-        std::array<Part, 3> parts {};
+        std::vector<Part> parts;
     };
     std::unordered_map<uint64_t, ItemVisualBackup> m_ItemVisualBackups;
     std::unordered_set<uint64_t> m_LoggedItemVisuals;
