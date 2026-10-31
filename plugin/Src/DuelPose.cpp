@@ -1,71 +1,65 @@
 #include "SdkWorld.h"
 #include "PoseHook.h"
+#include "coop/DuelSkeleton.h"
+
 #include <algorithm>
 #include <cmath>
+#include <string>
+#include <vector>
 
-// Overlay conservative, reversible punches and recoils on the existing
-// networked skeleton. The original native NPC knock-out hooks are NOT invoked.
+// A reversible visual override on the already synchronized partner stand-in.
+// No native close-combat enabling, AI state, physics, or actual NPC pacification.
 void SdkWorld::UpdateDuelPose() {
-    if (!m_InScene || !m_PartnerActor || m_PartnerHidden || m_RigHidden ||
-        m_PartnerRig != 1 || m_Mirror || !PartnerPosed() ||
-        m_RemoteBones.size() < 4) {
-        m_DuelPoseApplied = false;
-        return;
-    }
     if (!m_DuelMotion.Active()) {
-        if (m_DuelPoseApplied)
+        if (m_DuelPoseApplied && m_PartnerActor)
             PoseHook::SetTargetPose(m_RemoteBones, false);
         m_DuelPoseApplied = false;
         return;
     }
-    if (m_RemoteParents.size() != m_RemoteBones.size() ||
-        m_RemoteParents[0] != -1 || m_RemoteParents[1] < 0 ||
-        m_RemoteParents[2] < 0) {
-        m_DuelPoseApplied = false; // Fail closed on unverified skeleton layout.
+    const bool available = m_InScene && m_PartnerActor && !m_PartnerHidden &&
+        !m_RigHidden && m_PartnerRig == 1 && !m_Mirror && PartnerPosed() &&
+        m_RemoteBones.size() >= 12;
+    const bool hierarchy = available &&
+        m_RemoteParents.size() == m_RemoteBones.size() &&
+        m_RemoteParents[0] == -1 &&
+        m_RemoteParents[1] >= 0 && m_RemoteParents[2] >= 0;
+    if (!hierarchy) {
+        if (m_Trace && m_Now - m_DuelPoseDiagAt > 4.0) {
+            m_DuelPoseDiagAt = m_Now;
+            m_Trace("duel pose blocked: available=" + std::to_string(available) +
+                " rig=" + std::to_string(m_PartnerRig) +
+                " hidden=" + std::to_string(m_PartnerHidden || m_RigHidden) +
+                " netBones=" + std::to_string(m_RemoteBones.size()) +
+                " hierarchy=" + std::to_string(m_RemoteParents.size()));
+        }
+        if (m_DuelPoseApplied) {
+            if (m_PartnerActor && m_PartnerRig == 1 && m_RemoteBones.size() >= 2)
+                PoseHook::SetTargetPose(m_RemoteBones, false);
+            else PoseHook::ClearTargetPose();
+        }
+        m_DuelPoseApplied = false;
         return;
     }
 
-    if (!m_DuelArmChecked && m_RemoteParents.size() == m_LocalBones.size()) {
+    // R2.13 incorrectly searched mirrored shoulders ONLY along X and >=.09m.
+    // Both tested rigs matched 231 bones but yielded -1/-1, reducing the
+    // animation to almost imperceptible pelvis movements. Inspect any axis,
+    // validate upper torso branches and keep a useful torso fallback.
+    if (!m_DuelArmChecked && m_LocalBones.size() == m_RemoteBones.size()) {
+        std::vector<coop::duel_skeleton::Offset> offsets;
+        offsets.reserve(m_LocalBones.size());
+        for (const auto& b : m_LocalBones)
+            offsets.push_back({b.pos[0], b.pos[1], b.pos[2]});
+        const auto match = coop::duel_skeleton::Detect(m_RemoteParents, offsets);
+        m_DuelArmLeft = match.shoulderA;
+        m_DuelArmRight = match.shoulderB;
+        m_DuelUpperTorso = match.upperTorso;
         m_DuelArmChecked = true;
-        const int n = static_cast<int>(std::min<size_t>(m_RemoteParents.size(), 160));
-        float best = 0.f;
-        // Look for two mirrored shoulder branches with two or more descendants.
-        // If the skeleton differs from the known 47 layout, use torso only.
-        for (int parent = 3; parent < n; ++parent) {
-            int depth = 0, at = parent;
-            for (; at > 0 && depth < 25; ++depth) {
-                const int next = m_RemoteParents[at];
-                if (next < 0 || next >= at) break;
-                at = next;
-            }
-            if (depth < 4 || depth > 11) continue;
-            for (int a = parent + 1; a < n; ++a) {
-                if (m_RemoteParents[a] != parent) continue;
-                const float x = m_LocalBones[a].pos[0];
-                if (!std::isfinite(x) || x < .09f || x > .75f) continue;
-                for (int b = parent + 1; b < n; ++b) {
-                    if (m_RemoteParents[b] != parent) continue;
-                    const float y = m_LocalBones[b].pos[0];
-                    if (!std::isfinite(y) || y > -.09f || y < -.75f ||
-                        std::abs(x+y) > .25f) continue;
-                    const auto twoLinks = [&](int node) {
-                        for (int child = node + 1; child < n; ++child) {
-                            if (m_RemoteParents[child] != node) continue;
-                            for (int grand = child + 1; grand < n; ++grand)
-                                if (m_RemoteParents[grand] == child) return true;
-                        }
-                        return false;
-                    };
-                    if (twoLinks(a) && twoLinks(b) && x-y > best) {
-                        best = x-y;
-                        m_DuelArmLeft = a; m_DuelArmRight = b;
-                    }
-                }
-            }
-        }
-        if (m_Trace) m_Trace("duel pose arms " + std::to_string(m_DuelArmLeft) +
-            "/" + std::to_string(m_DuelArmRight) +
-            (m_DuelArmLeft < 0 ? " (torso-only fallback)" : ""));
+        if (m_Trace) m_Trace("duel pose rig map: shoulders=" +
+            std::to_string(m_DuelArmLeft) + "/" +
+            std::to_string(m_DuelArmRight) + " torso=" +
+            std::to_string(m_DuelUpperTorso) + " candidates=" +
+            std::to_string(match.candidatePairs));
     }
 
     m_DuelPoseScratch = m_RemoteBones;
@@ -74,24 +68,41 @@ void SdkWorld::UpdateDuelPose() {
     const float recoil = std::clamp(m_DuelMotion.recoil, 0.f, 1.f);
     const float down = std::clamp(m_DuelMotion.down, 0.f, 1.f);
     const float sway = std::clamp(m_DuelMotion.sway, 0.f, .2f);
-    const float breathe = std::sin(static_cast<float>(m_Now) * 5.f) * sway;
-    // Root and pelvis offsets are not moved sideways, avoiding teleporting a
-    // standing actor or triggering ragdoll/AI state. Shallow reel only.
-    coop::duel_motion::Twist(bones[1].rot, 0,
-        .12f*breathe - .19f*jab + .40f*recoil + .50f*down);
-    coop::duel_motion::Twist(bones[2].rot, 1,
-        .08f*breathe + .24f*jab - .12f*recoil);
-    coop::duel_motion::Twist(bones[2].rot, 0, .35f*down);
-    if (down > .001f)
-        bones[1].pos[2] -= .18f*down;
+    const float breathe = std::sin(static_cast<float>(m_Now)*5.f)*sway;
 
+    // Primary movement: twist an actual torso node, not only pelvis/root,
+    // which the native locomotion animation can visually cancel.
+    const int upper = m_DuelUpperTorso >= 3 &&
+        static_cast<size_t>(m_DuelUpperTorso) < bones.size() ?
+        m_DuelUpperTorso : 3;
+    coop::duel_motion::Twist(bones[1].rot, 0,
+        .10f*breathe - .11f*jab + .19f*recoil + .30f*down);
+    coop::duel_motion::Twist(bones[upper].rot, 0,
+        -.55f*jab + .63f*recoil + .78f*down + .17f*breathe);
+    coop::duel_motion::Twist(bones[upper].rot, 1,
+        .38f*jab - .23f*recoil + .09f*breathe);
+    if (down > .001f)
+        bones[1].pos[2] -= .28f*down;
+
+    // Shoulders are optional: never guess via hard-coded unvalidated bone
+    // numbers or cause a model to deform when the outfit skeleton differs.
     if (m_DuelArmLeft >= 0 && m_DuelArmRight >= 0 &&
-        static_cast<size_t>(std::max(m_DuelArmLeft, m_DuelArmRight)) < bones.size()) {
-        coop::duel_motion::Twist(bones[m_DuelArmLeft].rot, 1, -.65f*jab);
-        coop::duel_motion::Twist(bones[m_DuelArmRight].rot, 1, .45f*jab);
-        coop::duel_motion::Twist(bones[m_DuelArmLeft].rot, 0, -.18f*down);
-        coop::duel_motion::Twist(bones[m_DuelArmRight].rot, 0, .18f*down);
+        static_cast<size_t>(std::max(m_DuelArmLeft,m_DuelArmRight)) < bones.size()) {
+        coop::duel_motion::Twist(bones[m_DuelArmLeft].rot, 1, -.98f*jab);
+        coop::duel_motion::Twist(bones[m_DuelArmRight].rot, 1, .56f*jab);
+        coop::duel_motion::Twist(bones[m_DuelArmLeft].rot, 0, -.23f*down);
+        coop::duel_motion::Twist(bones[m_DuelArmRight].rot, 0, .23f*down);
     }
+
     PoseHook::SetTargetPose(bones, false);
+    if (m_Trace && m_Now - m_DuelPoseDiagAt > 4.0) {
+        m_DuelPoseDiagAt = m_Now;
+        m_Trace("duel pose ACTIVE shoulders " +
+            std::to_string(m_DuelArmLeft) + "/" +
+            std::to_string(m_DuelArmRight) + " torso=" +
+            std::to_string(upper) + " jab=" + std::to_string(jab) +
+            " recoil=" + std::to_string(recoil) +
+            " down=" + std::to_string(down));
+    }
     m_DuelPoseApplied = true;
 }

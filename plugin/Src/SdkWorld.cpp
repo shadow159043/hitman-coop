@@ -147,6 +147,8 @@ void SdkWorld::OnSceneCleared() {
     m_DuelPoseScratch.clear();
     m_DuelArmChecked = false;
     m_DuelArmLeft = m_DuelArmRight = -1;
+    m_DuelUpperTorso = -1;
+    m_DuelPoseDiagAt = -100.0;
     m_Marks.clear();
     m_PartnerWantsPause = false;
     m_RestartAskedAt = -1.0;
@@ -1383,6 +1385,9 @@ void SdkWorld::ShowRemotePose(const coop::Pose& p_Pose) {
     }
 
     m_RemotePoseTime = m_Now;
+    // Network pose updates must not overwrite a temporary fistfight gesture.
+    // The normal pose stream ran after UpdateDuelPose on some render frames.
+    if (m_DuelMotion.Active()) UpdateDuelPose();
 }
 
 ZActor* SdkWorld::NearestNpc(float* p_Distance) const {
@@ -2083,6 +2088,7 @@ void SdkWorld::ResetPartnerRig(double p_CheckIn) {
     m_PartnerRig = 0;
     m_DuelArmChecked = false;
     m_DuelArmLeft = m_DuelArmRight = -1;
+    m_DuelUpperTorso = -1;
     m_DuelPoseApplied = false;
     m_PartnerRigCheckAt = m_Now + p_CheckIn;
     m_RigParents.clear();

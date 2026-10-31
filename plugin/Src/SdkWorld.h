@@ -416,6 +416,8 @@ private:
     bool m_DuelPoseApplied = false;
     bool m_DuelArmChecked = false;
     int m_DuelArmLeft = -1, m_DuelArmRight = -1;
+    int m_DuelUpperTorso = -1;
+    double m_DuelPoseDiagAt = -100.0;
     // The NPC our 47 is choking, killing or dragging, streamed to the partner.
     void PickLocalVictim();
     ZActor* m_LocalVictim = nullptr;

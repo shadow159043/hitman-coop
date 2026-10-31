@@ -10,6 +10,7 @@
 #include "coop/FriendlyFire.h"
 #include "coop/Duel.h"
 #include "coop/DuelMotion.h"
+#include "coop/DuelSkeleton.h"
 #include "coop/Protocol.h"
 
 using namespace coop;
@@ -25,6 +26,32 @@ TEST(Duel_ReactionSpeedAdjudicationIsHostIndependent) {
     CHECK(duel::Judge(duel::kRoundMs, 100) == -2);
     CHECK(duel::Judge(100, duel::kRoundMs) == -2);
     // Missing-key and late/invalid packets never award points.
+}
+
+TEST(Duel_SkeletonDetectsShouldersOnAnyMirrorAxis) {
+    std::vector<int32_t> parents(50);
+    std::vector<duel_skeleton::Offset> offsets(50);
+    parents[0]=-1;
+    parents[1]=0; parents[2]=1; parents[3]=2; parents[4]=3;
+    parents[5]=4;
+    parents[6]=4; parents[7]=6; parents[8]=7; parents[9]=8;
+    parents[10]=4; parents[11]=10; parents[12]=11; parents[13]=12;
+    for (int i=14;i<50;++i) parents[i]=i-1;
+    offsets[6]={0,.17f,0}; offsets[10]={0,-.17f,0};
+    auto found=duel_skeleton::Detect(parents,offsets);
+    CHECK(found.shoulderA==6);
+    CHECK(found.shoulderB==10);
+    CHECK(found.upperTorso==4);
+    offsets[6]={0,0,.19f}; offsets[10]={0,0,-.19f};
+    found=duel_skeleton::Detect(parents,offsets);
+    CHECK(found.shoulderA==6 && found.shoulderB==10);
+    offsets[6]={}; offsets[10]={};
+    found=duel_skeleton::Detect(parents,offsets);
+    CHECK(found.shoulderA==-1 && found.shoulderB==-1);
+    CHECK(found.upperTorso==4); // A visible but conservative torso fallback.
+    parents[18]=99; // reject invalid parent rather than touching unknown bones
+    found=duel_skeleton::Detect(parents,offsets);
+    CHECK(found.upperTorso==-1 && found.shoulderA==-1);
 }
 
 TEST(Duel_AnimatedPunchIsBoundedAndNonlethal) {

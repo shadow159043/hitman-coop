@@ -1346,7 +1346,7 @@ void HitmanCoop::DrawSettingsTab() {
         s_Changed |= ImGui::Checkbox("Start together (hold my mission until my partner has loaded in, up to 90 s)", &m_WaitForPartner);
         s_Changed |= ImGui::Checkbox("Reconnect by myself when the connection drops", &m_AutoReconnect);
         s_Changed |= ImGui::Checkbox("Duel animations (EXPERIMENTAL stand-in sparring poses)", &m_DuelAnimations);
-        HelpMarker("OFF by default. During a fistfight, your partner stand-in jabs when they win an exchange, recoils when you win, and bends on defeat. It adds bounded rotations through the existing pose hook (no native NPC takedown or physics). If arms twist or models deform, turn this OFF immediately.");
+        HelpMarker("OFF by default. R2.14 expands the stand-in arm and upper-body detection, adds more visible jabs and recoils, and logs applied gestures. Still procedural, not native NPC melee. Enable on both PCs only when testing; turn OFF if an outfit twists.");
         s_Changed |= ImGui::Checkbox("Friendly fire (experimental: player-to-player damage)", &m_FriendlyFire);
         HelpMarker("Off by default. BOTH players must enable to send/receive damage. Each hit on a partner stand-in transfers 12% of max health, stopping at 1 HP. HITMAN's hit hook cannot yet distinguish NPC shots reliably: stray hits may also transfer. No native death animations or lethal damage yet.");
         if (m_FriendlyFire)
