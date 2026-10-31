@@ -159,6 +159,10 @@ void SdkWorld::OnSceneCleared() {
     m_HasPartnerSentXf = false;
     m_Items.clear();
     m_PeerHeldItems.clear();
+    m_PeerItemVisualRefs.clear();
+    m_ItemVisualBackups.clear();
+    m_LoggedItemVisuals.clear();
+    m_ItemVisibilityReasserts.clear();
     m_PendingPeerItems.clear();
     m_DroppedItemVisuals.clear(); // Scene unload owns the created render entities.
     m_DroppedItemTickets.clear();
@@ -2630,7 +2634,7 @@ void SetItemShown(ZHM5Item* p_Item, bool p_Shown, ZEntityRef p_Root = {}) {
 // original flags later. This is visual-only: item ownership and physics do
 // not change, and no extra world-inventory scan is introduced.
 void SdkWorld::SetPeerItemVisible(uint64_t id, ZHM5Item* item,
-                                   const ZEntityRef& ref, bool visible) {
+                                   const ZEntityRef& ref, bool visible, bool includeProperties) {
     if (!item) return;
     // On both tested machines the item root and both SDK geometry references
     // resolve to the *same* spatial node. The rendered mesh may instead live
@@ -2663,10 +2667,16 @@ void SdkWorld::SetPeerItemVisible(uint64_t id, ZHM5Item* item,
     auto& backup = m_ItemVisualBackups[id];
     // Snapshot MUST happen before reflection-driven SetProperty calls;
     // otherwise the backup may capture the already-hidden state.
+    bool overriddenAgain = false;
     for (ZSpatialEntity* part : parts) {
         auto saved = std::find_if(backup.parts.begin(), backup.parts.end(),
             [part](const ItemVisualBackup::Part& node) { return node.identity == part; });
         if (!visible) {
+            // Reenabling after the previous hide confirms game scripts are
+            // actively driving renderer flags between inventory scans.
+            if (saved != backup.parts.end() &&
+                (part->m_bVisible || !part->m_bParentHidden || part->m_bForceVisible))
+                overriddenAgain = true;
             // Never dereference a stored pointer; the world can respawn items.
             // A newly-created child receives a new snapshot on the next scan.
             if (saved == backup.parts.end()) {
@@ -2685,7 +2695,16 @@ void SdkWorld::SetPeerItemVisible(uint64_t id, ZHM5Item* item,
         }
     }
     if (!visible) {
-        SetItemShown(item, false, ref);
+        if (includeProperties) SetItemShown(item, false, ref);
+        if (overriddenAgain && m_Trace) {
+            uint32_t& n = m_ItemVisibilityReasserts[id];
+            if (n < 10000) {
+                ++n;
+                if (n == 10 || n == 90 || n == 450)
+                    m_Trace("item visibility: game re-enabled model id=" +
+                        std::to_string(id) + " count=" + std::to_string(n));
+            }
+        }
         // Native fields take precedence if the reflected property was not
         // implemented for this entity template. Write them again afterward.
         for (ZSpatialEntity* part : parts) if (part) {
@@ -2718,6 +2737,19 @@ void SdkWorld::SetPeerItemVisible(uint64_t id, ZHM5Item* item,
         }
         m_ItemVisualBackups.erase(id);
         m_LoggedItemVisuals.erase(id);
+    }
+}
+
+void SdkWorld::ReapplyPeerHeldItemVisibility() {
+    if (!m_InScene || m_PeerItemVisualRefs.empty()) return;
+    // Per-frame reassertion is intentionally O(held items), not O(all scene
+    // items). Known entity references are refreshed by the existing 10Hz scan.
+    size_t seen = 0;
+    for (const auto& [id, ref] : m_PeerItemVisualRefs) {
+        if (++seen > 64) break;
+        if (!m_PeerHeldItems.contains(id) || !ref || !ref.GetEntity()) continue;
+        if (ZHM5Item* item = ref.QueryInterface<ZHM5Item>())
+            SetPeerItemVisible(id, item, ref, false, false);
     }
 }
 
@@ -2759,6 +2791,16 @@ void SdkWorld::CollectItemChanges(std::vector<coop::ItemChange>& p_Out) {
         s_Indexes.emplace(p_Id, s_Items.size());
         s_Items.push_back({ p_Id, p_Item, p_Ref });
     });
+    // Discard stale per-frame references as soon as the regular inventory
+    // scan no longer finds that item. The engine is allowed to despawn props.
+    for (auto it = m_PeerItemVisualRefs.begin(); it != m_PeerItemVisualRefs.end();) {
+        if (s_Indexes.contains(it->first)) { ++it; continue; }
+        const uint64_t id = it->first;
+        it = m_PeerItemVisualRefs.erase(it);
+        m_ItemVisualBackups.erase(id);
+        m_LoggedItemVisuals.erase(id);
+        m_ItemVisibilityReasserts.erase(id);
+    }
     // Late-spawning scene items may have missed a reliable peer pickup/dropped event.
     for (auto s_It = m_PendingPeerItems.begin(); s_It != m_PendingPeerItems.end();) {
         if (!s_Indexes.contains(s_It->first)) { ++s_It; continue; }
@@ -2769,8 +2811,19 @@ void SdkWorld::CollectItemChanges(std::vector<coop::ItemChange>& p_Out) {
     // Visibility is driven by the game and can be re-enabled by scene scripts.
     // Find held objects by O(1) index lookup, not another 2-pass inventory walk.
     for (const uint64_t s_Id : m_PeerHeldItems) {
-        if (const auto s_It = s_Indexes.find(s_Id); s_It != s_Indexes.end())
-            SetPeerItemVisible(s_Id, s_Items[s_It->second].item, s_Items[s_It->second].ref, false);
+        if (const auto s_It = s_Indexes.find(s_Id); s_It != s_Indexes.end()) {
+            // A new instance can reuse an ID. The next hide pass starts with
+            // a fresh snapshot if its native scene entity has changed.
+            const ZEntityRef& currentRef = s_Items[s_It->second].ref;
+            if (const auto cached = m_PeerItemVisualRefs.find(s_Id);
+                cached != m_PeerItemVisualRefs.end() && cached->second.m_pObj != currentRef.m_pObj) {
+                m_ItemVisualBackups.erase(s_Id);
+                m_LoggedItemVisuals.erase(s_Id);
+                m_ItemVisibilityReasserts.erase(s_Id);
+            }
+            m_PeerItemVisualRefs[s_Id] = currentRef;
+            SetPeerItemVisible(s_Id, s_Items[s_It->second].item, currentRef, false);
+        }
     }
     CollectDoorChanges(p_Out);
     CollectBodyChanges(p_Out);
@@ -2847,6 +2900,10 @@ void SdkWorld::ResetItems() {
     }
 
     m_PeerHeldItems.clear();
+    m_PeerItemVisualRefs.clear();
+    m_ItemVisualBackups.clear();
+    m_LoggedItemVisuals.clear();
+    m_ItemVisibilityReasserts.clear();
     m_PendingPeerItems.clear();
     for (auto& [s_Id, s_Item] : m_DroppedItemVisuals) {
         if (s_Item && Globals::WorldInventory)
@@ -2962,6 +3019,13 @@ void SdkWorld::ApplyPeerItem(const coop::ItemChange& p_Change) {
     ZHM5Item* s_Item = FindItem(p_Change.id, s_Ref);
 
     if (!s_Item) {
+        // No live item was resolved; never retain its raw scene reference for
+        // next-frame visibility writes. The pending packet handles later spawns.
+        m_PeerItemVisualRefs.erase(p_Change.id);
+        m_ItemVisualBackups.erase(p_Change.id);
+        m_ItemVisibilityReasserts.erase(p_Change.id);
+        m_LoggedItemVisuals.erase(p_Change.id);
+        if (!p_Change.Taken()) m_PeerHeldItems.erase(p_Change.id);
         // Inventory-created drops may have a different dynamic entity ID on each PC.
         // Show a cosmetic copy by repository ID rather than silently losing the drop.
         if (!p_Change.Taken() && !p_Change.repositoryId.empty()) {
@@ -2984,6 +3048,7 @@ void SdkWorld::ApplyPeerItem(const coop::ItemChange& p_Change) {
 
     if (p_Change.Taken()) {
         m_PeerHeldItems.insert(p_Change.id);
+        m_PeerItemVisualRefs[p_Change.id] = s_Ref;
         SetPeerItemVisible(p_Change.id, s_Item, s_Ref, false);
 
         if (m_Trace)
@@ -2994,6 +3059,8 @@ void SdkWorld::ApplyPeerItem(const coop::ItemChange& p_Change) {
 
     if (m_PeerHeldItems.erase(p_Change.id)) {
         SetPeerItemVisible(p_Change.id, s_Item, s_Ref, true);
+        m_PeerItemVisualRefs.erase(p_Change.id);
+        m_ItemVisibilityReasserts.erase(p_Change.id);
 
         if (m_Trace)
             m_Trace("item: " + std::to_string(p_Change.id) + " put back by the partner");

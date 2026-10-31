@@ -85,6 +85,7 @@ public:
     void KillNpc(uint64_t p_Id) override;
     void OnPeerMissionEvent(const std::string& p_Name, const std::string& p_Json) override;
     void CollectItemChanges(std::vector<coop::ItemChange>& p_Out) override;
+    void ReapplyPeerHeldItemVisibility();
     void ApplyPeerItem(const coop::ItemChange& p_Change) override;
     void ResetItems() override;
     void CollectAlerts(std::vector<coop::NpcAlert>& p_Out) override;
@@ -476,7 +477,13 @@ private:
     };
     std::unordered_map<uint64_t, ItemVisualBackup> m_ItemVisualBackups;
     std::unordered_set<uint64_t> m_LoggedItemVisuals;
-    void SetPeerItemVisible(uint64_t p_Id, class ZHM5Item* p_Item, const ZEntityRef& p_Ref, bool p_Visible);
+    // Refreshed by the existing 10Hz item scan, reused to hide only tracked
+    // peer-held models every game frame without scanning the whole inventory.
+    std::unordered_map<uint64_t, ZEntityRef> m_PeerItemVisualRefs;
+    std::unordered_map<uint64_t, uint32_t> m_ItemVisibilityReasserts;
+
+    void SetPeerItemVisible(uint64_t p_Id, class ZHM5Item* p_Item, const ZEntityRef& p_Ref,
+        bool p_Visible, bool p_IncludePropertyWrites = true);
     // A peer can pick up an item before its entity spawns locally. Reapply it on later scans.
     std::unordered_map<uint64_t, coop::ItemChange> m_PendingPeerItems;
     // Visual-only local echoes for player-dropped items whose IDs do not exist on this PC.

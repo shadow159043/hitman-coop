@@ -1412,6 +1412,10 @@ void HitmanCoop::OnFrameUpdate(const SGameUpdateEvent& p_UpdateEvent) {
     m_World.UpdatePauseCap();
     UpdateWaitForPartner(s_Now, m_FrameStatus);
     m_World.UpdateRestart(m_LevelState == static_cast<int>(ZLevelManager::EGameState::EGS_Playing));
+    // Only already-known remote-held items: native game scripts can restore
+    // scene geometry each frame, so a 100ms visibility scan was insufficient.
+    // No full-world item scan or network packet is added here.
+    m_World.ReapplyPeerHeldItemVisibility();
     UpdateDuel(s_Now);
     // A duel scores only timed key presses; do not convert incidental stand-in
     // collisions into HP damage during the challenge.
