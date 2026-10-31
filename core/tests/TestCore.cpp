@@ -74,9 +74,9 @@ TEST(Bytes_RejectsNonFiniteFloats) {
 
 TEST(Protocol_RoundTripAll) {
     {
-        MsgHello m { kProtocolVersion, "0.1.0", "3.240.1", "Alice" }, o;
+        MsgHello m { kProtocolVersion, "0.1.0", "3.240.1", "Alice", "ARTUR-7", "test-only-secret" }, o;
         CHECK(Decode(Encode(m), o) && o.protocol == m.protocol && o.modVersion == "0.1.0" && o.gameVersion == "3.240.1" &&
-            o.playerName == "Alice");
+            o.playerName == "Alice" && o.roomCode == "ARTUR-7" && o.password == "test-only-secret");
     }
     {
         MsgSceneInfo m, o;

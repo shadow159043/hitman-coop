@@ -104,6 +104,8 @@ void Session::Join(std::unique_ptr<IDatagramSocket> p_Socket, const Endpoint& p_
     s_Hello.modVersion = m_Config.modVersion;
     s_Hello.gameVersion = m_Config.gameVersion;
     s_Hello.playerName = m_Config.playerName;
+    s_Hello.roomCode = m_Config.roomCode;
+    s_Hello.password = m_Config.roomPassword;
     m_Conn->SendReliable(MsgType::Hello, Encode(s_Hello));
 
     FlushTo(p_Now);
@@ -950,6 +952,12 @@ void Session::HandleHello(const MsgHello& p_Hello, double p_Now) {
     }
     else if (!m_Config.allowGameVersionMismatch && p_Hello.gameVersion != m_Config.gameVersion) {
         s_Reason = "Game version mismatch (host " + m_Config.gameVersion + ", you " + p_Hello.gameVersion + ").";
+    }
+    else if (!m_Config.roomCode.empty() && p_Hello.roomCode != m_Config.roomCode) {
+        s_Reason = "Incorrect room code. Ask the host for their room code.";
+    }
+    else if (!m_Config.roomPassword.empty() && p_Hello.password != m_Config.roomPassword) {
+        s_Reason = "Incorrect room password.";
     }
 
     if (!s_Reason.empty()) {

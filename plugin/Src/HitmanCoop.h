@@ -219,7 +219,7 @@ private:
     double m_LastRegroup = -100.0;
     // The last join, retried when the connection is lost (not when refused or left).
     struct JoinMemory {
-        std::string address, name, relay;
+        std::string address, name, relay, roomCode, roomPassword;
     };
     std::optional<JoinMemory> m_LastJoin;
     bool m_JoinedOnce = false; // connected with m_LastJoin at least once: its failures are worth retrying
@@ -283,6 +283,8 @@ private:
         std::string name;
         std::string relay;     // co-op server, empty for none
         int value = 0;         // signal: which
+        std::string roomCode;
+        std::string roomPassword;
     };
 
     std::mutex m_CommandMutex;
@@ -300,6 +302,15 @@ private:
     char m_NameBuffer[64] = "Agent";
     char m_AddressBuffer[128] = "";
     char m_RelayBuffer[128] = "";
+    char m_RoomCodeBuffer[17] = ""; // Custom 4-16 character code, generated once if left empty.
+    char m_RoomPasswordBuffer[65] = ""; // Kept in memory, never in the settings file.
+    char m_JoinRoomCodeBuffer[17] = "";
+    char m_JoinPasswordBuffer[65] = "";
+    bool m_UseRoomPassword = false;
+    bool m_ShowRoomPassword = false;
+    std::string m_ActiveRoomCode; // Snapshot of credentials actually used for the current host.
+    std::string m_ActiveRoomPassword;
+    int m_ActiveHostPort = coop::kDefaultPort; // The port used when HOST was pressed.
     int m_Port = coop::kDefaultPort;
     bool m_FollowHost = true;
     bool m_CorrectNpcs = true;

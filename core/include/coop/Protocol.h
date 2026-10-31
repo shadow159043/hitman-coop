@@ -14,7 +14,8 @@ namespace coop {
 // 9: chat, marks, loading notices, knock-outs, compact NPC snapshots.
 // 10: player status (alerts, menus, mission stats), mark kinds, what a loading partner loads.
 // 11: the host's mod version in Welcome, a player's colour and "away" in their status.
-constexpr uint32_t kProtocolVersion = 12;
+// 13: optional host room code and password checked before a peer can join.
+constexpr uint32_t kProtocolVersion = 13;
 
 constexpr uint16_t kDefaultPort = 47047;
 constexpr size_t kMaxPacketSize = 1200;
@@ -121,6 +122,8 @@ struct MsgHello {
     std::string modVersion;
     std::string gameVersion;
     std::string playerName;
+    std::string roomCode; // Host-created room identifier; direct IP/Tailscale still needed without a relay.
+    std::string password; // Session-only access check; transport is not encrypted.
 
     void Write(ByteWriter& w) const;
     bool Read(ByteReader& r);

@@ -1097,6 +1097,46 @@ TEST(Session_HostOverIpAndRelayAtOnce) {
     CHECK(s_Host.Synced());
 }
 
+// Host room admission checks run before the friend is allowed to sync any gameplay.
+TEST(Session_CustomRoomCodeAndPassword) {
+    SessionConfig s_Host;
+    s_Host.roomCode = "ARTUR-7";
+    s_Host.roomPassword = "private-for-this-session";
+
+    SessionConfig s_Guest = s_Host;
+    Duo s_Correct(129, s_Host, s_Guest);
+    s_Correct.Start();
+    s_Correct.Step(1.0);
+    CHECK(s_Correct.host.Status().state == SessionState::Connected);
+    CHECK(s_Correct.client.Status().state == SessionState::Connected);
+
+    s_Guest.roomPassword = "wrong";
+    Duo s_WrongPassword(130, s_Host, s_Guest);
+    s_WrongPassword.Start();
+    s_WrongPassword.Step(1.0);
+    CHECK(s_WrongPassword.host.Status().state == SessionState::Listening);
+    CHECK(s_WrongPassword.client.Status().state == SessionState::Failed);
+    CHECK(s_WrongPassword.client.Status().message.find("password") != std::string::npos);
+
+    s_Guest.roomPassword = s_Host.roomPassword;
+    s_Guest.roomCode = "NOT-THE-ROOM";
+    Duo s_WrongCode(131, s_Host, s_Guest);
+    s_WrongCode.Start();
+    s_WrongCode.Step(1.0);
+    CHECK(s_WrongCode.host.Status().state == SessionState::Listening);
+    CHECK(s_WrongCode.client.Status().state == SessionState::Failed);
+    CHECK(s_WrongCode.client.Status().message.find("room code") != std::string::npos);
+
+    // No password is required when the host leaves it unset.
+    s_Host.roomPassword.clear();
+    s_Guest = s_Host;
+    Duo s_NoPassword(132, s_Host, s_Guest);
+    s_NoPassword.Start();
+    s_NoPassword.Step(1.0);
+    CHECK(s_NoPassword.host.Status().state == SessionState::Connected);
+    CHECK(s_NoPassword.client.Status().state == SessionState::Connected);
+}
+
 TEST(Session_ProtocolMismatchIsRejected) {
     auto s_Net = SimNetwork::Create(25);
     FakeWorld s_HostWorld("host");

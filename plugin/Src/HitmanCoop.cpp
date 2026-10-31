@@ -1036,7 +1036,10 @@ void HitmanCoop::ProcessCommands(double p_Now) {
                 m_ReconnectAttempt = 0;
                 m_ReconnectAt = 0.0;
                 m_Reconnecting = true;
-                PushCommand({ Command::Kind::Join, m_LastJoin->address, 0, m_LastJoin->name, m_LastJoin->relay });
+                Command s_Join { Command::Kind::Join, m_LastJoin->address, 0, m_LastJoin->name, m_LastJoin->relay };
+                s_Join.roomCode = m_LastJoin->roomCode;
+                s_Join.roomPassword = m_LastJoin->roomPassword;
+                PushCommand(s_Join);
             }
 
             continue;
@@ -1065,7 +1068,7 @@ void HitmanCoop::ProcessCommands(double p_Now) {
                 m_JoinedOnce = false;
             }
 
-            m_LastJoin = JoinMemory { s_Command.address, s_Command.name, s_Command.relay };
+            m_LastJoin = JoinMemory { s_Command.address, s_Command.name, s_Command.relay, s_Command.roomCode, s_Command.roomPassword };
         }
         else {
             m_LastJoin.reset();
@@ -1077,6 +1080,8 @@ void HitmanCoop::ProcessCommands(double p_Now) {
         s_Config.playerName = s_Command.name.empty() ? "Agent" : s_Command.name;
         s_Config.modVersion = c_ModVersion;
         s_Config.gameVersion = m_GameVersion;
+        s_Config.roomCode = s_Command.roomCode;
+        s_Config.roomPassword = s_Command.roomPassword;
 
         m_Session = std::make_unique<coop::Session>(m_World, s_Config);
         m_Relay.reset();

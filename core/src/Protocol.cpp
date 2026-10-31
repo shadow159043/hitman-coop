@@ -211,10 +211,13 @@ void MsgHello::Write(ByteWriter& w) const {
     w.Str(modVersion);
     w.Str(gameVersion);
     w.Str(playerName);
+    w.Str(roomCode);
+    w.Str(password);
 }
 
 bool MsgHello::Read(ByteReader& r) {
-    return r.U32(protocol) && r.Str(modVersion, 64) && r.Str(gameVersion, 64) && r.Str(playerName, 64);
+    return r.U32(protocol) && r.Str(modVersion, 64) && r.Str(gameVersion, 64) && r.Str(playerName, 64) &&
+        r.Str(roomCode, 24) && r.Str(password, 128);
 }
 
 void MsgWelcome::Write(ByteWriter& w) const {

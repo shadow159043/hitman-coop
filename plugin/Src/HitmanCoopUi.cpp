@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <random>
 #include <sstream>
 
 #include "IconsMaterialDesign.h"
@@ -734,6 +735,13 @@ void HitmanCoop::DrawPlayTab(const coop::SessionStatus& p_Status, bool p_InMissi
     const Palette s_Palette = Colours(m_ColourBlind);
 
     if (!s_Active) {
+        if (!m_RoomCodeBuffer[0]) {
+            static constexpr char c_Alphabet[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+            std::random_device s_Random;
+            for (int i = 0; i < 6; ++i)
+                m_RoomCodeBuffer[i] = c_Alphabet[s_Random() % (sizeof(c_Alphabet) - 1)];
+            m_RoomCodeBuffer[6] = '\0';
+        }
         SectionTitle(ICON_MD_PERSON " You");
         ImGui::SetNextItemWidth(260.f * m_WindowScale);
 
@@ -743,7 +751,7 @@ void HitmanCoop::DrawPlayTab(const coop::SessionStatus& p_Status, bool p_InMissi
         if (ImGui::BeginTable("##HitmanCoopStart", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_BordersInnerV)) {
             ImGui::TableNextColumn();
             SectionTitle(ICON_MD_WIFI_TETHERING " Host a game");
-            ImGui::TextWrapped(m_RelayBuffer[0] ? "You get a join code to give your friend." : "No co-op server is set (Settings): friends join by IP address.");
+            ImGui::TextWrapped(m_RelayBuffer[0] ? "You can also get a relay join code." : "Share an IP or Tailscale address with your friend. Your room code protects the room but does not route connections.");
 
             if (!m_LanAddress.empty())
                 ImGui::TextDisabled("This PC on your network: %s", Hide(m_LanAddress).c_str());
@@ -751,17 +759,39 @@ void HitmanCoop::DrawPlayTab(const coop::SessionStatus& p_Status, bool p_InMissi
             if (!m_TailscaleAddress.empty())
                 ImGui::TextDisabled("Tailscale: %s", Hide(m_TailscaleAddress).c_str());
 
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            ImGui::InputText("Room code", m_RoomCodeBuffer, sizeof(m_RoomCodeBuffer), ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank);
+            if (ImGui::SmallButton("Generate new code")) m_RoomCodeBuffer[0] = '\0';
+            ImGui::Checkbox("Require a password", &m_UseRoomPassword);
+            if (m_UseRoomPassword) {
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                ImGui::InputText("Room password", m_RoomPasswordBuffer, sizeof(m_RoomPasswordBuffer), ImGuiInputTextFlags_Password);
+            }
+            const std::string s_Room = m_RoomCodeBuffer;
+            const bool s_RoomValid = s_Room.size() >= 4 && s_Room.size() <= 16 &&
+                std::all_of(s_Room.begin(), s_Room.end(), [](unsigned char c) { return (c >= 'A' && c <= 'Z') ||
+                    (c >= '0' && c <= '9') || c == '-'; });
+            const bool s_PasswordValid = !m_UseRoomPassword || std::strlen(m_RoomPasswordBuffer) >= 4;
+            if (!s_RoomValid) ImGui::TextColored(s_Palette.bad, "Use 4-16 letters, numbers or hyphens for the room code.");
+            if (!s_PasswordValid) ImGui::TextColored(s_Palette.bad, "Set a password of at least 4 characters.");
             ImGui::Spacing();
-
+            ImGui::BeginDisabled(!s_RoomValid || !s_PasswordValid);
             if (WideButton(ICON_MD_WIFI_TETHERING " HOST", 36.f * m_WindowScale)) {
                 SaveSettings();
-                PushCommand({ Command::Kind::Host, {}, static_cast<uint16_t>(m_Port), m_NameBuffer, m_RelayBuffer });
+                m_ActiveRoomCode = s_Room;
+                m_ActiveRoomPassword = m_UseRoomPassword ? m_RoomPasswordBuffer : "";
+                m_ActiveHostPort = m_Port;
+                Command s_Host { Command::Kind::Host, {}, static_cast<uint16_t>(m_Port), m_NameBuffer, m_RelayBuffer };
+                s_Host.roomCode = m_ActiveRoomCode;
+                s_Host.roomPassword = m_ActiveRoomPassword;
+                PushCommand(s_Host);
             }
+            ImGui::EndDisabled();
 
             ImGui::TableNextColumn();
             SectionTitle(ICON_MD_LOGIN " Join a friend");
             ImGui::SetNextItemWidth(-FLT_MIN);
-            ImGui::InputTextWithHint("##HitmanCoopAddress", "Join code (like K7P2QX) or IP address", m_AddressBuffer, sizeof(m_AddressBuffer),
+            ImGui::InputTextWithHint("##HitmanCoopAddress", "Friend's IP, Tailscale IP or relay join code", m_AddressBuffer, sizeof(m_AddressBuffer),
                 m_Streamer ? ImGuiInputTextFlags_Password : 0);
 
             if (ImGui::Button(ICON_MD_CONTENT_PASTE " Paste")) {
@@ -777,12 +807,18 @@ void HitmanCoop::DrawPlayTab(const coop::SessionStatus& p_Status, bool p_InMissi
                 }
             }
 
-            ImGui::SameLine();
-
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            ImGui::InputText("Friend's room code", m_JoinRoomCodeBuffer, sizeof(m_JoinRoomCodeBuffer), ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank);
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            ImGui::InputText("Friend's room password (if needed)", m_JoinPasswordBuffer, sizeof(m_JoinPasswordBuffer), ImGuiInputTextFlags_Password);
+            ImGui::TextDisabled("Direct rooms need the host IP and room code.");
             if (WideButton(ICON_MD_LOGIN " JOIN", 0.f) && m_AddressBuffer[0] != '\0') {
                 RememberJoin(m_AddressBuffer);
                 SaveSettings();
-                PushCommand({ Command::Kind::Join, m_AddressBuffer, 0, m_NameBuffer, m_RelayBuffer });
+                Command s_Join { Command::Kind::Join, m_AddressBuffer, 0, m_NameBuffer, m_RelayBuffer };
+                s_Join.roomCode = m_JoinRoomCodeBuffer;
+                s_Join.roomPassword = m_JoinPasswordBuffer;
+                PushCommand(s_Join);
             }
 
             if (!m_RecentJoins.empty()) {
@@ -839,9 +875,12 @@ void HitmanCoop::DrawPlayTab(const coop::SessionStatus& p_Status, bool p_InMissi
             ImGui::SameLine();
 
             if (ImGui::Button(ICON_MD_SHARE " Copy invite")) {
-                const std::string s_Invite = "Join me in HITMAN Co-op (by Jordan Rodrigues, version " + std::string(c_ModVersion) +
-                    "): start any mission at the same location, press ~, click CO-OP and type the join code " + p_Relay->code + ".";
-                ImGui::SetClipboardText(s_Invite.c_str());
+                std::ostringstream s_Invite;
+                s_Invite << "Join HITMAN Co-op by Artur " << c_ModVersion << "\nRelay join code: " << p_Relay->code
+                         << "\nRoom code: " << m_ActiveRoomCode;
+                if (!m_ActiveRoomPassword.empty()) s_Invite << "\nRoom password: " << m_ActiveRoomPassword;
+                s_Invite << "\nOpen ~ > CO-OP > Play > Join a friend. Use the same relay server and enter all room details.";
+                ImGui::SetClipboardText(s_Invite.str().c_str());
             }
 
             ImGui::TextDisabled("Your friend types it under \"Join a friend\".%s", m_Streamer ? " (Hidden: streamer mode.)" : "");
@@ -973,6 +1012,49 @@ void HitmanCoop::DrawPlayTab(const coop::SessionStatus& p_Status, bool p_InMissi
 
     if (ImGui::Button(ICON_MD_LOGOUT " Leave session"))
         PushCommand({ Command::Kind::Leave });
+
+    // The host's share sheet stays directly underneath Leave session while the room is open.
+    if (p_Status.role == coop::SessionRole::Host) {
+        ImGui::Spacing();
+        SectionTitle(ICON_MD_INFO " Room details - share with your friend");
+        if (!m_LanAddress.empty())
+            ImGui::TextWrapped("Same Wi-Fi IP: %s", Hide(m_LanAddress).c_str());
+        if (!m_TailscaleAddress.empty())
+            ImGui::TextWrapped("Tailscale IP: %s", Hide(m_TailscaleAddress).c_str());
+        ImGui::Text("UDP port: %d", m_ActiveHostPort);
+        ImGui::TextColored(c_Gold, "Room code: %s", m_Streamer ? "(hidden in streamer mode)" : m_ActiveRoomCode.c_str());
+        if (p_Relay && p_Relay->phase == coop::RelayState::Phase::Ready)
+            ImGui::TextColored(c_Gold, "Relay join code: %s", m_Streamer ? "(hidden)" : p_Relay->code.c_str());
+        if (m_ActiveRoomPassword.empty()) {
+            ImGui::TextDisabled("Room password: none");
+        } else {
+            ImGui::Text("Room password: %s", !m_Streamer && m_ShowRoomPassword ? m_ActiveRoomPassword.c_str() : "********");
+            if (!m_Streamer)
+                ImGui::Checkbox("Show password", &m_ShowRoomPassword);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Copy password"))
+                ImGui::SetClipboardText(m_ActiveRoomPassword.c_str());
+        }
+        ImGui::TextWrapped("Friend: open ~ > CO-OP > Play > Join a friend. Enter one of the addresses (or the relay join code), then the room code and password.");
+        ImGui::TextDisabled("The room code cannot locate a host by itself without a relay server.");
+        if (!m_ActiveRoomPassword.empty())
+            ImGui::TextDisabled("Caution: the game connection is not encrypted. Use a unique password, not an account password.");
+
+        if (ImGui::Button(ICON_MD_CONTENT_COPY " Copy full invite")) {
+            std::ostringstream s_Invite;
+            s_Invite << "HITMAN Co-op by Artur - version " << c_ModVersion << "\n";
+            if (!m_TailscaleAddress.empty()) s_Invite << "Tailscale IP: " << m_TailscaleAddress << ':' << m_ActiveHostPort << "\n";
+            if (!m_LanAddress.empty()) s_Invite << "Same-network IP: " << m_LanAddress << ':' << m_ActiveHostPort << "\n";
+            if (p_Relay && p_Relay->phase == coop::RelayState::Phase::Ready)
+                s_Invite << "Relay join code: " << p_Relay->code << " (requires the same relay server)\n";
+            s_Invite << "Room code: " << m_ActiveRoomCode << "\n";
+            if (!m_ActiveRoomPassword.empty()) s_Invite << "Room password: " << m_ActiveRoomPassword << "\n";
+            s_Invite << "Open ~ > CO-OP > Play > Join a friend. Enter the IP or relay code, room code, and password (if set). Both players need HITMAN Co-op " << c_ModVersion << ".";
+            ImGui::SetClipboardText(s_Invite.str().c_str());
+        }
+        if (!m_ActiveRoomPassword.empty())
+            ImGui::TextDisabled("Copy full invite includes the password. Share it privately.");
+    }
 }
 
 void HitmanCoop::DrawChatTab(const coop::SessionStatus& p_Status) {
