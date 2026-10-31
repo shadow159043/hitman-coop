@@ -1127,6 +1127,7 @@ void HitmanCoop::ProcessCommands(double p_Now) {
             std::string s_SteamError;
             auto s_Steam = SteamP2PSocket::Open(0, s_SteamError);
             m_SteamHostReady = s_Steam != nullptr;
+            if (!s_Steam) m_World.Notify("Steam P2P not initialized: " + s_SteamError + ". IP/Tailscale hosting still works.");
             m_Session->Host(std::make_unique<coop::MultiSocket>(std::move(s_Udp), std::move(s_Relay), std::move(s_Steam)));
         }
         else {

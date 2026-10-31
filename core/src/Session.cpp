@@ -352,6 +352,9 @@ SessionStatus Session::Status() const {
     if (m_LastAvatarReceivedAt >= 0.0 && m_LastTick >= m_LastAvatarReceivedAt)
         s_Status.avatarReceiveAgeSeconds = m_LastTick - m_LastAvatarReceivedAt;
 
+    if (m_Socket)
+        s_Status.transportDiagnostic = m_Socket->Diagnostic();
+
     if (m_Conn) {
         s_Status.stats = m_Conn->Stats();
         s_Status.peerAddress = m_Conn->Remote().ToString();
@@ -417,9 +420,19 @@ void Session::Tick(double p_Now, float p_Dt) {
     if (m_Role == SessionRole::None)
         return;
 
+    // Steam's legacy P2P handshake can exceed 20 seconds before signalling failure.
+    // Keep the established fast timeout for direct-IP and relay connections.
+    const bool s_ConnectingSteam = m_Conn && m_Conn->Remote().IsSteam();
+    const double s_ConnectLimit = s_ConnectingSteam ? std::max(35.0, m_Config.connectTimeout) : m_Config.connectTimeout;
     if (m_Role == SessionRole::Client && m_State == SessionState::Connecting &&
-        p_Now - m_ConnectStart > m_Config.connectTimeout) {
-        if (m_Conn && m_Conn->Remote().IsRelay())
+        p_Now - m_ConnectStart > s_ConnectLimit) {
+        if (s_ConnectingSteam) {
+            const std::string s_Detail = m_Socket ? m_Socket->Diagnostic() : std::string();
+            Fail("Steam P2P connection timed out after 35 seconds. " +
+                (s_Detail.empty() ? std::string("No Steam networking diagnostics were reported.") : s_Detail) +
+                " Both players must run HITMAN through Steam. If Steam fails, try the Tailscale/IP join option.");
+        }
+        else if (m_Conn && m_Conn->Remote().IsRelay())
             Fail("No answer from the host through the co-op server. Check the join code, and that the host's game is still hosting.");
         else
             Fail("No answer from the host. Check the address, and that the host forwarded UDP port " +

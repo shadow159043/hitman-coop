@@ -38,6 +38,9 @@ public:
 
     // Non-blocking. Returns the datagram size, or -1 when nothing is waiting.
     virtual int RecvFrom(Endpoint& p_From, uint8_t* p_Buffer, size_t p_Capacity) = 0;
+
+    // Diagnostic-only state for failed Steam sessions; never carries passwords or game content.
+    virtual std::string Diagnostic() const { return {}; }
 };
 
 // Winsock UDP socket. Bind port 0 to get an ephemeral port.
@@ -72,6 +75,8 @@ public:
             (p_To.IsRelay() ? m_Relay.get() : m_Udp.get());
         return s_Socket && s_Socket->SendTo(p_To, p_Data, p_Size);
     }
+
+    std::string Diagnostic() const override { return m_Steam ? m_Steam->Diagnostic() : std::string(); }
 
     int RecvFrom(Endpoint& p_From, uint8_t* p_Buffer, size_t p_Capacity) override {
         // Round-robin all three transports so none starves during a busy mission.

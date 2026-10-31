@@ -1100,6 +1100,23 @@ TEST(Session_ConnectTimeoutHasHelpfulMessage) {
     CHECK(d.client.Status().message.find("forwarded UDP port") != std::string::npos);
 }
 
+TEST(Session_SteamHandshakeWaitsForTransportAndHasSteamError) {
+    struct SilentSteamSocket : IDatagramSocket {
+        bool SendTo(const Endpoint&, const uint8_t*, size_t) override { return true; }
+        int RecvFrom(Endpoint&, uint8_t*, size_t) override { return -1; }
+        std::string Diagnostic() const override { return "Steam client: sent=12, send_failed=0, received=0, requests=0. No Steam gameplay packets arrived."; }
+    };
+    Duo d(88);
+    d.client.Join(std::make_unique<SilentSteamSocket>(), Endpoint::Steam(76561198000000001ULL), d.t);
+    d.Step(12.0);
+    CHECK(d.client.Status().state == SessionState::Connecting);
+    d.Step(24.0);
+    CHECK(d.client.Status().state == SessionState::Failed);
+    CHECK(d.client.Status().message.find("Steam P2P") != std::string::npos);
+    CHECK(d.client.Status().message.find("sent=12") != std::string::npos);
+    CHECK(d.client.Status().message.find("forwarded UDP port") == std::string::npos);
+}
+
 TEST(Session_ThirdPlayerIsTurnedAway) {
     Duo d(24);
     d.HostLoads(c_Miami, 0);

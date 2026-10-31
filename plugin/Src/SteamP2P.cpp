@@ -2,13 +2,55 @@
 #include "coop/Protocol.h"
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <sstream>
+#include <ctime>
 
 namespace {
 constexpr uint32_t kHitmanSteamAppId = 1659040;
 constexpr int kP2PSessionRequestCallback = 1202;
+constexpr int kP2PSessionConnectFailCallback = 1203;
+// Avoid logging Steam account identifiers, room codes, passwords, network addresses or game packets.
+void LogSteam(const std::string& p_Message) {
+    static std::mutex s_LogMutex;
+    std::lock_guard s_Lock(s_LogMutex);
+    char s_LocalAppData[32767]{};
+    const DWORD s_Len = GetEnvironmentVariableA("LOCALAPPDATA", s_LocalAppData, sizeof(s_LocalAppData));
+    if (s_Len == 0 || s_Len >= sizeof(s_LocalAppData)) return;
+    const std::string s_Dir = std::string(s_LocalAppData) + "\\HitmanCoop";
+    CreateDirectoryA(s_Dir.c_str(), nullptr);
+    std::ofstream s_File(s_Dir + "\\SteamP2P.log", std::ios::app);
+    if (!s_File) return;
+    std::time_t s_Now = std::time(nullptr);
+    s_File << static_cast<long long>(s_Now) << " " << p_Message << '\n';
+}
 }
 
-SteamP2PSocket::SteamP2PSocket() : m_Callback(*this) {}
+SteamP2PSocket::SteamP2PSocket() : m_Callback(*this), m_FailureCallback(*this) {}
+
+std::string SteamP2PSocket::SteamErrorDescription(uint8_t p_Error) {
+    switch (p_Error) {
+        case 1: return "Steam says the other player is not running the same game";
+        case 2: return "Steam says this account has no rights to this game";
+        case 3: return "Steam says the destination player is offline";
+        case 4: return "Steam P2P timed out; check Steam overlay, NAT/firewall or host acceptance";
+        default: return "Steam P2P reported error code " + std::to_string(p_Error);
+    }
+}
+
+std::string SteamP2PSocket::Diagnostic() const {
+    std::ostringstream s_Detail;
+    s_Detail << "Steam " << (m_IsHost ? "host" : "client") << ": sent=" << m_SendCount.load()
+        << ", send_failed=" << m_SendFailedCount.load()
+        << ", received=" << m_ReceivedCount.load() << ", requests=" << m_Requests.load()
+        << ", accepted=" << m_Accepted.load() << ".";
+    if (const int s_Error = m_LastSteamError.load())
+        s_Detail << " " << SteamErrorDescription(static_cast<uint8_t>(s_Error)) << ".";
+    else if (!m_ReceivedCount.load())
+        s_Detail << " No Steam gameplay packets arrived; inspect the host log.";
+    return s_Detail.str();
+}
 
 bool SteamP2PSocket::ParseAddress(const std::string& p_Text, uint64_t& p_SteamId) {
     p_SteamId = 0;
@@ -65,13 +107,19 @@ std::unique_ptr<SteamP2PSocket> SteamP2PSocket::Open(uint64_t p_HostPeer, std::s
     s_Result->m_AllowedPeer = p_HostPeer;
     s_Result->m_IsHost = p_HostPeer == 0;
     s_Register(&s_Result->m_Callback, kP2PSessionRequestCallback);
+    s_Register(&s_Result->m_FailureCallback, kP2PSessionConnectFailCallback);
     s_Result->m_Registered = true;
+    LogSteam(p_HostPeer ? "client Steam P2P opened (App 1659040, channel 127)" :
+        "host Steam P2P listening (App 1659040, channel 127)");
     return s_Result;
 }
 
 SteamP2PSocket::~SteamP2PSocket() {
-    if (m_Registered && m_Unregister && GetModuleHandleW(L"steam_api64.dll") == m_Module)
+    if (m_Registered && m_Unregister && GetModuleHandleW(L"steam_api64.dll") == m_Module) {
         m_Unregister(&m_Callback);
+        m_Unregister(&m_FailureCallback);
+    }
+    LogSteam(Diagnostic());
     if (m_Networking && m_CloseChannel && GetModuleHandleW(L"steam_api64.dll") == m_Module) {
         const uint64_t s_Peer = m_AllowedPeer.load();
         if (s_Peer)
@@ -83,6 +131,8 @@ SteamP2PSocket::~SteamP2PSocket() {
 }
 
 void SteamP2PSocket::OnSessionRequest(uint64_t p_Peer) {
+    ++m_Requests;
+    LogSteam(m_IsHost ? "host received Steam session request" : "client received Steam session request");
     if (!p_Peer || !m_Networking || !m_Accept)
         return;
     if (m_IsHost) {
@@ -91,12 +141,42 @@ void SteamP2PSocket::OnSessionRequest(uint64_t p_Peer) {
         std::lock_guard s_Lock(m_PeersMutex);
         if (!m_AllowedHostPeers.contains(p_Peer) && m_AllowedHostPeers.size() >= 4)
             return;
-        if (m_Accept(m_Networking, p_Peer))
+        if (m_Accept(m_Networking, p_Peer)) {
             m_AllowedHostPeers.insert(p_Peer);
+            ++m_Accepted;
+            LogSteam("host accepted Steam P2P session request");
+        } else {
+            LogSteam("host Steam AcceptP2PSessionWithUser returned false");
+        }
         return;
     }
-    if (m_AllowedPeer.load() == p_Peer)
-        m_Accept(m_Networking, p_Peer);
+    if (m_AllowedPeer.load() == p_Peer) {
+        if (m_Accept(m_Networking, p_Peer)) {
+            ++m_Accepted;
+            LogSteam("client accepted expected Steam session request");
+        } else LogSteam("client Steam AcceptP2PSessionWithUser returned false");
+    } else LogSteam("client ignored unexpected Steam session request");
+}
+
+void SteamP2PSocket::OnSessionFailure(uint64_t p_Peer, uint8_t p_Error) {
+    if (!p_Peer) return;
+    // Client only accepts a failure about the intended host; host can receive failures
+    // about one of its admitted candidate peers.
+    if (!m_IsHost && p_Peer != m_AllowedPeer.load()) return;
+    if (m_IsHost) {
+        std::lock_guard s_Lock(m_PeersMutex);
+        if (!m_AllowedHostPeers.contains(p_Peer)) return;
+    }
+    m_LastSteamError = p_Error;
+    LogSteam(SteamErrorDescription(p_Error));
+}
+
+void SteamP2PSocket::FailureCallback::Run(void* p_Data) {
+    if (!p_Data) return;
+    const auto* s_Bytes = static_cast<const uint8_t*>(p_Data);
+    uint64_t s_Peer = 0;
+    std::memcpy(&s_Peer, s_Bytes, sizeof(s_Peer));
+    m_Owner.OnSessionFailure(s_Peer, s_Bytes[sizeof(uint64_t)]);
 }
 
 void SteamP2PSocket::SessionCallback::Run(void* p_Data) {
@@ -117,7 +197,14 @@ bool SteamP2PSocket::SendTo(const coop::Endpoint& p_To, const uint8_t* p_Data, s
     }
     // Reliability is already implemented by the co-op Connection layer. This preserves
     // its sequencing, retransmission and congestion behavior without double-buffering.
-    return m_Send(m_Networking, p_To.steamPeer, p_Data, static_cast<uint32_t>(p_Size), 0, kChannel);
+    const bool s_Ok = m_Send(m_Networking, p_To.steamPeer, p_Data, static_cast<uint32_t>(p_Size), 0, kChannel);
+    const uint32_t s_Number = ++m_SendCount;
+    if (!s_Ok) {
+        if (++m_SendFailedCount <= 3) LogSteam("Steam SendP2PPacket returned false");
+    }
+    else if (s_Number == 1 || s_Number == 30 || s_Number == 100)
+        LogSteam("Steam SendP2PPacket queued outgoing handshake/gameplay datagram");
+    return s_Ok;
 }
 
 int SteamP2PSocket::RecvFrom(coop::Endpoint& p_From, uint8_t* p_Buffer, size_t p_Capacity) {
@@ -144,5 +231,6 @@ int SteamP2PSocket::RecvFrom(coop::Endpoint& p_From, uint8_t* p_Buffer, size_t p
         return -1;
     }
     p_From = coop::Endpoint::Steam(s_Peer);
+    if (++m_ReceivedCount == 1) LogSteam("first incoming Steam P2P datagram received");
     return static_cast<int>(s_Read);
 }

@@ -1058,6 +1058,10 @@ void HitmanCoop::DrawPlayTab(const coop::SessionStatus& p_Status, bool p_InMissi
 
     if (ImGui::Button(ICON_MD_LOGOUT " Leave session"))
         PushCommand({ Command::Kind::Leave });
+    if (!p_Status.transportDiagnostic.empty()) {
+        ImGui::TextWrapped("Steam network: %s", p_Status.transportDiagnostic.c_str());
+        ImGui::TextDisabled("Local diagnostic log: %%LOCALAPPDATA%%\\HitmanCoop\\SteamP2P.log");
+    }
 
     // The host's share sheet stays directly underneath Leave session while the room is open.
     if (p_Status.role == coop::SessionRole::Host) {

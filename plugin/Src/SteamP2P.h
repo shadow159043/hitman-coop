@@ -6,6 +6,7 @@
 #endif
 #include <Windows.h>
 #include <atomic>
+#include <string>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -24,6 +25,9 @@ public:
 
     bool SendTo(const coop::Endpoint& p_To, const uint8_t* p_Data, size_t p_Size) override;
     int RecvFrom(coop::Endpoint& p_From, uint8_t* p_Buffer, size_t p_Capacity) override;
+    std::string Diagnostic() const override;
+
+    static std::string SteamErrorDescription(uint8_t p_Error);
 
     static bool ParseAddress(const std::string& p_Text, uint64_t& p_SteamId);
 private:
@@ -41,6 +45,18 @@ private:
         SteamP2PSocket& m_Owner;
     };
 
+    class FailureCallback {
+    public:
+        explicit FailureCallback(SteamP2PSocket& p_Owner) : m_Owner(p_Owner) {}
+        virtual void Run(void* p_Data);
+        virtual void Run(void* p_Data, bool, uint64_t) { Run(p_Data); }
+        virtual int GetCallbackSizeBytes() { return 16; }
+        uint8_t m_Flags = 0;
+        int m_CallbackId = 0;
+    private:
+        SteamP2PSocket& m_Owner;
+    };
+
     using SendFn = bool (__cdecl*)(void*, uint64_t, const void*, uint32_t, int, int);
     using AvailableFn = bool (__cdecl*)(void*, uint32_t*, int);
     using ReadFn = bool (__cdecl*)(void*, void*, uint32_t, uint32_t*, uint64_t*, int);
@@ -49,6 +65,7 @@ private:
     using UnregisterFn = void (__cdecl*)(void*);
 
     void OnSessionRequest(uint64_t p_Peer);
+    void OnSessionFailure(uint64_t p_Peer, uint8_t p_Error);
     HMODULE m_Module = nullptr;
     void* m_Networking = nullptr;
     SendFn m_Send = nullptr;
@@ -58,7 +75,14 @@ private:
     CloseChannelFn m_CloseChannel = nullptr;
     UnregisterFn m_Unregister = nullptr;
     SessionCallback m_Callback;
+    FailureCallback m_FailureCallback;
     bool m_Registered = false;
+    std::atomic<uint32_t> m_SendCount {0};
+    std::atomic<uint32_t> m_SendFailedCount {0};
+    std::atomic<uint32_t> m_ReceivedCount {0};
+    std::atomic<uint32_t> m_Requests {0};
+    std::atomic<uint32_t> m_Accepted {0};
+    std::atomic<int> m_LastSteamError {0};
     std::atomic<uint64_t> m_AllowedPeer {0}; // client: explicit invite target
     bool m_IsHost = false;
     std::mutex m_PeersMutex;

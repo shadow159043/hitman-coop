@@ -97,7 +97,7 @@ public:
 
 struct SessionConfig {
     std::string playerName = "Agent";
-    std::string modVersion = "0.12.6";
+    std::string modVersion = "0.12.7";
     std::string gameVersion = "unknown";
     std::string roomCode;    // Host's expected code; client's code to present at handshake.
     std::string roomPassword; // Optional host password / client entry (not saved to configuration).
@@ -143,6 +143,7 @@ struct SessionStatus {
     std::string peerGameVersion;
     std::string peerModVersion;
     std::string peerAddress;
+    std::string transportDiagnostic; // Steam connection counts/errors, never includes secrets.
     bool synced = false;
     uint32_t epoch = 0;
     SceneDesc hostScene;

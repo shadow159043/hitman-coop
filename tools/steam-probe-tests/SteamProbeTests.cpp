@@ -39,6 +39,10 @@ int main() {
     pp->ready = 1;
     coop::Endpoint from;
     assert(mux.RecvFrom(from, buf, sizeof(buf)) == 1 && from == target && buf[0] == 42);
+    assert(SteamP2PSocket::SteamErrorDescription(1).find("same game") != std::string::npos);
+    assert(SteamP2PSocket::SteamErrorDescription(2).find("no rights") != std::string::npos);
+    assert(SteamP2PSocket::SteamErrorDescription(3).find("offline") != std::string::npos);
+    assert(SteamP2PSocket::SteamErrorDescription(4).find("timed out") != std::string::npos);
     SteamInvite test;
     std::string error;
     assert(!test.OpenInviteDialog("steam:76561198000000000", "ARTUR-42", error) && !error.empty());
