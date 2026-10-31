@@ -21,6 +21,7 @@ class ZTemplateEntityFactory;
 #include "SteamP2P.h"
 #include "SdkWorld.h"
 #include "TestChannel.h"
+#include "coop/Duel.h"
 #include "coop/GameEvents.h"
 #include "coop/RelaySocket.h"
 #include "coop/Session.h"
@@ -101,6 +102,28 @@ private:
     double m_FriendlyDamageWindowAt = -100.0;
     int m_FriendlyDamageWindowHits = 0;
     bool ApplyFriendlyDamage(int p_Hits);
+
+    // Optional synchronized head-to-head reaction challenge (R2.12).
+    // Gameplay state belongs to the game thread; the UI receives a snapshot under m_StatusMutex.
+    struct DuelState {
+        enum class Phase { Idle, SentChallenge, ReceivedChallenge, WaitingStart, Countdown, Fighting, WaitingResult, Result } phase = Phase::Idle;
+        uint32_t id = 0, seed = 0;
+        double created = 0.0, start = 0.0, resultAt = 0.0;
+        bool initiated = false, submitted = false, keysHeld[4] {};
+        int remoteScore = -1, verdict = 0; // verdict: 1 local won, -1 local lost, 0 tie
+        coop::duel::Rhythm rhythm;
+    };
+    DuelState m_Duel;
+    DuelState m_DuelView; // protected by m_StatusMutex (render thread only reads it)
+    uint32_t m_DuelSerial = 40000;
+    double m_LastDuelAt = -100.0;
+    std::atomic<bool> m_DuelInputBlocked { false };
+    double m_DuelDownUntil = -100.0;
+    bool CanStartDuel() const;
+    void UpdateDuel(double p_Now);
+    void BeginDuelResult(uint32_t p_HostScore, uint32_t p_ClientScore, double p_Now);
+    bool OnDuelEvent(const std::string& p_Name, const std::string& p_Json, double p_Now);
+    void DrawDuel();
 
     // Teamwork: ready checks, the 3-2-1 countdown, signals and "come to me" (as mission events).
     bool OnTeamEvent(const std::string& p_Name, const std::string& p_Json);
@@ -287,7 +310,7 @@ private:
 
     // Requests from the UI (render thread), handled on the game thread.
     struct Command {
-        enum class Kind { Host, Join, Leave, Chat, QuickChat, Regroup, Ping, ComeHere, ReadyCheck, Countdown, Signal, Kick, Reconnect } kind;
+        enum class Kind { Host, Join, Leave, Chat, QuickChat, Regroup, Ping, ComeHere, ReadyCheck, Countdown, Signal, Kick, Reconnect, DuelChallenge, DuelAccept, DuelDecline } kind;
         std::string address;   // join: code or address
         uint16_t port = 0;
         std::string name;

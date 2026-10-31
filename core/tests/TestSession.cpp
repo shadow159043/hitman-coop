@@ -1361,6 +1361,32 @@ TEST(Session_ExperimentalFriendlyDamageEventRelaysOnReliableChannel) {
     // application are validated by the plugin in a live two-player HITMAN game.
 }
 
+TEST(Session_DuelInviteAcceptScoreAndResultReliableBothWays) {
+    Duo d(102);
+    d.HostLoads(c_Miami, 4);
+    d.ClientLoads(c_Miami, 4, 0.f);
+    d.Start();
+    REQUIRE(d.StepUntilSynced(4.0));
+    d.host.SendMissionEvent("Coop_DuelChallenge", "40123");
+    d.Step(0.2);
+    REQUIRE(!d.clientWorld.peerEvents.empty());
+    CHECK(d.clientWorld.peerEvents.back() == "Coop_DuelChallenge:40123");
+    d.client.SendMissionEvent("Coop_DuelAccept", "40123");
+    d.Step(0.2);
+    CHECK(d.hostWorld.peerEvents.back() == "Coop_DuelAccept:40123");
+    d.host.SendMissionEvent("Coop_DuelStart", "40123:149297");
+    d.Step(0.2);
+    CHECK(d.clientWorld.peerEvents.back() == "Coop_DuelStart:40123:149297");
+    d.client.SendMissionEvent("Coop_DuelScore", "40123:8");
+    d.Step(0.2);
+    CHECK(d.hostWorld.peerEvents.back() == "Coop_DuelScore:40123:8");
+    d.host.SendMissionEvent("Coop_DuelResult", "40123:9:8");
+    d.Step(0.2);
+    CHECK(d.clientWorld.peerEvents.back() == "Coop_DuelResult:40123:9:8");
+    CHECK(d.host.Status().state == SessionState::Connected);
+    CHECK(d.client.Status().state == SessionState::Connected);
+}
+
 TEST(Session_ItemChangesReachPeer) {
     Duo d(30);
     d.HostLoads(c_Miami, 0);

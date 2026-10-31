@@ -8,9 +8,46 @@
 #include "coop/Connection.h"
 #include "coop/Interpolation.h"
 #include "coop/FriendlyFire.h"
+#include "coop/Duel.h"
 #include "coop/Protocol.h"
 
 using namespace coop;
+
+TEST(Duel_BothPlayersReceiveIdenticalPromptsAndAtMostOnePointPerRound) {
+    const uint32_t seed = 0x12345678u;
+    coop::duel::Rhythm host, client;
+    const double start = 120.0;
+    for (int r = 0; r < coop::duel::kRounds; ++r) {
+        const int key = coop::duel::Prompt(seed, r);
+        CHECK(coop::duel::Prompt(seed, r) == key);
+        CHECK(host.Press(seed, key, start + r * coop::duel::kSecondsPerRound + 0.15, start));
+        CHECK(!host.Press(seed, key, start + r * coop::duel::kSecondsPerRound + 0.25, start));
+        CHECK(client.Press(seed, key, start + r * coop::duel::kSecondsPerRound + 0.2, start));
+    }
+    CHECK(host.score == coop::duel::kRounds);
+    CHECK(client.score == coop::duel::kRounds);
+    CHECK(coop::duel::Winner(host.score, client.score) == 0); // Ties never stun either fighter.
+    CHECK(coop::duel::Round(start - 0.1, start) == -1);
+    CHECK(coop::duel::Round(start + coop::duel::kDuration + 0.1, start) == coop::duel::kRounds);
+    CHECK(!host.Press(seed, 0, start + coop::duel::kDuration, start));
+}
+
+TEST(Duel_WinnerAndWirePayloadsAreValidated) {
+    CHECK(coop::duel::Winner(9, 7) == 1);
+    CHECK(coop::duel::Winner(7, 9) == 2);
+    CHECK(coop::duel::Winner(7, 7) == 0);
+    CHECK(coop::duel::Winner(22, 7) == -2);
+    uint32_t id = 0, n = 0, m = 0;
+    CHECK(coop::duel::Number("123456", id) && id == 123456u);
+    CHECK(!coop::duel::Number("-1", id));
+    CHECK(!coop::duel::Number("abc", id));
+    CHECK(coop::duel::Pair("123:12", id, n, coop::duel::kRounds) && id == 123 && n == 12);
+    CHECK(!coop::duel::Pair("123:13", id, n, coop::duel::kRounds));
+    CHECK(!coop::duel::Pair("123:12:3", id, n, coop::duel::kRounds));
+    CHECK(coop::duel::Triple("123:9:11", id, n, m, coop::duel::kRounds, coop::duel::kRounds) &&
+        id == 123 && n == 9 && m == 11);
+    CHECK(!coop::duel::Triple("123:9:99", id, n, m, coop::duel::kRounds, coop::duel::kRounds));
+}
 
 TEST(FriendlyFire_EnabledWithoutCosmeticWeaponStateSendsDamage) {
     // Regression: R2.10's LocalHeldWeapon() returned false for some guns and

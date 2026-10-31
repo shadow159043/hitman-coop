@@ -969,6 +969,32 @@ void HitmanCoop::DrawPlayTab(const coop::SessionStatus& p_Status, bool p_InMissi
         if (s_Waiting && ImGui::Button(ICON_MD_PLAY_ARROW " Start without waiting for them"))
             m_SkipWait = true;
 
+        // Head-to-head reaction challenge. Only in the same mission, while close
+        // enough for a fistfight. The render thread never modifies game duel state.
+        DuelState s_Duel;
+        bool s_CloseEnough = false;
+        {
+            std::lock_guard s_Lock(m_StatusMutex);
+            s_Duel = m_DuelView;
+            s_CloseEnough = m_Overlay.partnerShown && m_Overlay.partnerDistance <= coop::duel::kChallengeRange;
+        }
+        SectionTitle("Fistfight challenge (experimental)");
+        if (s_Duel.phase == DuelState::Phase::ReceivedChallenge) {
+            ImGui::TextWrapped("%s challenges you to a fair keypress duel! 12 timed arrow prompts. Higher score wins; the loser is stunned for 3 seconds.", p_Status.peerName.c_str());
+            ImGui::BeginDisabled(!s_CloseEnough || !p_Status.synced);
+            if (ImGui::Button("Accept fistfight")) PushCommand({ Command::Kind::DuelAccept });
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Decline")) PushCommand({ Command::Kind::DuelDecline });
+        } else if (s_Duel.phase == DuelState::Phase::Idle || s_Duel.phase == DuelState::Phase::Result) {
+            ImGui::BeginDisabled(!p_Status.synced || !s_CloseEnough);
+            if (ImGui::Button("Challenge to fistfight")) PushCommand({ Command::Kind::DuelChallenge });
+            ImGui::EndDisabled();
+            if (!s_CloseEnough) ImGui::TextDisabled("Stand within 2.75 m of your partner.");
+        } else {
+            ImGui::TextDisabled("Fistfight request/round underway. Close the CO-OP menu before the countdown.");
+        }
+        ImGui::TextDisabled("Both use UP / RIGHT / DOWN / LEFT arrows. No damage, no kills; controls briefly locked for loser.");
         // Teamwork, in a grid of buttons (each also has a hotkey).
         SectionTitle(ICON_MD_GROUPS " Teamwork");
         const auto Key = [](Hotkeys::Action p_Action) {
@@ -1715,6 +1741,7 @@ void HitmanCoop::OnDrawUI(bool p_HasFocus) {
     DrawHud(s_Status, s_InMission, s_Overlay, s_Reconnecting);
     DrawRadar(s_Overlay, s_Status, m_HudBottom);
     DrawCountdown();
+    DrawDuel();
     DrawSummary();
     DrawToasts();
 

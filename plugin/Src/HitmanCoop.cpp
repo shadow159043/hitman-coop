@@ -157,10 +157,11 @@ void HitmanCoop::Init() {
     Hooks::ZApplicationEngineWin32_OnMainWindowActivated->AddDetour(this, &HitmanCoop::OnWindowActivated);
     m_World.m_EventHook = [this](const std::string& p_Name, const std::string& p_Json) { return OnTeamEvent(p_Name, p_Json); };
 
-    if (m_Test.Enabled()) {
-        Hooks::ZInputAction_Digital->AddDetour(this, &HitmanCoop::OnInputDigital);
-        Hooks::ZInputAction_Analog->AddDetour(this, &HitmanCoop::OnInputAnalog);
-    }
+    // A temporary non-lethal duel knockdown suppresses controls for three
+    // seconds. Hook both input channels even with the test channel disabled;
+    // both hooks fast-exit in ordinary gameplay.
+    Hooks::ZInputAction_Digital->AddDetour(this, &HitmanCoop::OnInputDigital);
+    Hooks::ZInputAction_Analog->AddDetour(this, &HitmanCoop::OnInputAnalog);
 
     Logger::Info("[HitmanCoop] HITMAN Co-op v{} by {} loaded (protocol {}), game version {}.", c_ModVersion, c_Author,
         coop::kProtocolVersion, m_GameVersion);
@@ -677,6 +678,7 @@ bool HitmanCoop::ApplyFriendlyDamage(int p_Hits) {
 // The partner's teamwork events (see the Coop_* names below); false for any other event.
 bool HitmanCoop::OnTeamEvent(const std::string& p_Name, const std::string& p_Json) {
     const double s_Now = Now();
+    if (OnDuelEvent(p_Name, p_Json, s_Now)) return true;
     const std::string& s_Partner = m_FrameStatus.peerName.empty() ? std::string("Your partner") : m_FrameStatus.peerName;
     const std::string s_ReadyKey = Hotkeys::Name(Hotkeys::Get(Hotkeys::Action::ReadyCheck));
     const std::string s_RegroupKey = Hotkeys::Name(Hotkeys::Get(Hotkeys::Action::Regroup));
@@ -1012,6 +1014,39 @@ void HitmanCoop::ProcessCommands(double p_Now) {
     }
 
     for (const auto& s_Command : s_Commands) {
+        if (s_Command.kind == Command::Kind::DuelChallenge) {
+            if (!CanStartDuel())
+                m_World.Notify("Get within 2.75 m of your friend in the same mission to challenge them.");
+            else if ((m_Duel.phase != DuelState::Phase::Idle && m_Duel.phase != DuelState::Phase::Result) ||
+                     p_Now - m_LastDuelAt < 8.0)
+                m_World.Notify("A fistfight is already pending, or the rematch cooldown is active.");
+            else {
+                m_Duel = {};
+                m_Duel.id = ++m_DuelSerial;
+                m_Duel.initiated = true;
+                m_Duel.phase = DuelState::Phase::SentChallenge;
+                m_Duel.created = p_Now;
+                m_Session->SendMissionEvent("Coop_DuelChallenge", std::to_string(m_Duel.id));
+                m_World.Notify("Fistfight challenge sent. Your friend must accept in CO-OP > Play.");
+            }
+            continue;
+        }
+        if (s_Command.kind == Command::Kind::DuelAccept || s_Command.kind == Command::Kind::DuelDecline) {
+            if (m_Duel.phase == DuelState::Phase::ReceivedChallenge && m_Session && m_Session->Synced()) {
+                const bool s_Yes = s_Command.kind == Command::Kind::DuelAccept && CanStartDuel();
+                m_Session->SendMissionEvent(s_Yes ? "Coop_DuelAccept" : "Coop_DuelDecline",
+                    std::to_string(m_Duel.id));
+                if (s_Yes) {
+                    m_Duel.phase = DuelState::Phase::WaitingStart;
+                    m_World.Notify("Fistfight accepted. Close CO-OP; countdown begins when your partner starts it.");
+                } else {
+                    m_Duel = {};
+                    m_LastDuelAt = p_Now;
+                    m_World.Notify("Fistfight declined or players moved too far apart.");
+                }
+            }
+            continue;
+        }
         if (s_Command.kind == Command::Kind::Chat || s_Command.kind == Command::Kind::QuickChat) {
             if (m_Session && m_Session->Status().state == coop::SessionState::Connected) {
                 m_Session->SendChat(s_Command.address, s_Command.kind == Command::Kind::QuickChat);
@@ -1359,6 +1394,11 @@ void HitmanCoop::OnFrameUpdate(const SGameUpdateEvent& p_UpdateEvent) {
     m_World.UpdatePauseCap();
     UpdateWaitForPartner(s_Now, m_FrameStatus);
     m_World.UpdateRestart(m_LevelState == static_cast<int>(ZLevelManager::EGameState::EGS_Playing));
+    UpdateDuel(s_Now);
+    // A duel scores only timed key presses; do not convert incidental stand-in
+    // collisions into HP damage during the challenge.
+    if (m_Duel.phase == DuelState::Phase::Countdown || m_Duel.phase == DuelState::Phase::Fighting ||
+        m_Duel.phase == DuelState::Phase::WaitingResult) m_FriendlyHits.exchange(0);
 
     // The hook counts impacts on the protected remote stand-in. R2.10 incorrectly
     // required LocalHeldWeapon(), which is a best-effort COSMETIC inventory
@@ -1862,6 +1902,7 @@ void HitmanCoop::PublishStatus() {
     m_OverlayTogether = m_SyncedSince < 0.0 ? -1.0 : s_Now - m_SyncedSince;
     m_OverlayCountdownEnd = m_CountdownEnd;
     m_OverlayReady = s_Now - m_PartnerAskedReadyAt < 60.0 ? 2 : s_Now - m_ReadyAskedAt < 30.0 ? 1 : 0;
+    m_DuelView = m_Duel;
     m_OverlayPartnerStill = s_Now - m_PartnerMovedAt;
     m_OverlayCanReconnect = m_LastJoin.has_value() && s_Status.state == coop::SessionState::Failed;
     m_InMission = m_World.IsInScene();
@@ -2145,6 +2186,8 @@ DEFINE_PLUGIN_DETOUR(HitmanCoop, void, OnWindowActivated, ZApplicationEngineWin3
 DEFINE_ZHM_PLUGIN(HitmanCoop);
 
 DEFINE_PLUGIN_DETOUR(HitmanCoop, bool, OnInputDigital, ZInputAction* th, int32_t p_ControllerId) {
+    if (m_DuelInputBlocked && !m_OverlayOpen) return HookResult<bool>(HookAction::Return(), false);
+    if (!m_Test.Enabled()) return HookResult<bool>(HookAction::Continue());
     if (!th || !th->m_szName)
         return HookResult<bool>(HookAction::Continue());
 
@@ -2168,6 +2211,8 @@ DEFINE_PLUGIN_DETOUR(HitmanCoop, bool, OnInputDigital, ZInputAction* th, int32_t
 }
 
 DEFINE_PLUGIN_DETOUR(HitmanCoop, float, OnInputAnalog, ZInputAction* th, int32_t p_ControllerId) {
+    if (m_DuelInputBlocked && !m_OverlayOpen) return HookResult<float>(HookAction::Return(), 0.0f);
+    if (!m_Test.Enabled()) return HookResult<float>(HookAction::Continue());
     if (!th || !th->m_szName)
         return HookResult<float>(HookAction::Continue());
 

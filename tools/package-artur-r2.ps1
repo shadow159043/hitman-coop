@@ -11,7 +11,7 @@ $NetTest = Join-Path $Root "_build-sdk420\core\RelWithDebInfo\HitmanCoop-NetTest
 $NewDll = Join-Path $Root "_build-sdk420\plugin\RelWithDebInfo\HitmanCoop.dll"
 $Stage = Join-Path $OutDir "_artur-r2-stage"
 $Payload = Join-Path $OutDir "_artur-r2-payload.zip"
-$Setup = Join-Path $OutDir "HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.11-FRIENDLY-FIRE-FIX.exe"
+$Setup = Join-Path $OutDir "HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.12-FIST-DUEL-TEST.exe"
 $Csc = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 $Fx = Split-Path $Csc
 foreach ($f in @((Join-Path $R2 "Retail\mods\HitmanCoop.dll"), (Join-Path $R2 "Retail\ZHMModSDK.dll"), $NetTest, $NewDll, $Csc)) {
@@ -27,7 +27,7 @@ Copy-Item $NetTest (Join-Path $Stage "Test-Connection.exe")
 Copy-Item (Join-Path $R2 "HITMAN-COOP-LICENSE.txt") (Join-Path $Stage "LICENSE.txt")
 Copy-Item (Join-Path $R2 "SDK-LICENSE.txt") (Join-Path $Stage "SDK-LICENSE.txt")
 Copy-Item (Join-Path $R2 "READ-ME-FIRST.txt") (Join-Path $Stage "READ-ME-FIRST.txt")
-$ReadmeIntro = "R2.11 friendly fire fix / v0.12.10: optional friendly fire no longer depends on the unreliable cosmetic equipped-weapon detector. Both players must enable the setting. The local checkbox shows ON status and hit attempts are logged for diagnosis. This is a NONLETHAL experimental health-transfer feature (12% of maximum HP per hit, stop at 1 HP). The game hook cannot reliably attribute the attacker, so NPC hits may trigger damage. Requires matching R2.11 installs, HITMAN 3.290.1.x and ZHMModSDK 4.2.0. R2.9 performance features and R2.8 Steam invites remain. Two-PC hit/HP behavior is not live verified. Original mod by Jordan Rodrigues, GPL-3.0-or-later."
+$ReadmeIntro = "R2.12 FISTFIGHT DUEL TEST / v0.12.11 (protocol 16): either partner can issue a close-range fistfight challenge, friend must accept, then both see the same 12 timed UP/RIGHT/DOWN/LEFT prompts. More correct keypresses wins; ties are draws. The loser receives a 3-second nonlethal control stun only, no HP loss or mission kill. NOT a native animated NPC-style melee or physical ragdoll. Experimental controls and synchronization still need live validation on TWO PCs. R2.11 friendly fire, R2.9 performance optimizations and Steam invites retained. Both players require R2.12/v0.12.11 and HITMAN 3.290.1.x plus ZHMModSDK 4.2.0. Original mod by Jordan Rodrigues, GPL-3.0-or-later."
 $ReadmeOriginal = Get-Content (Join-Path $Stage "READ-ME-FIRST.txt") -Raw
 Set-Content (Join-Path $Stage "READ-ME-FIRST.txt") -Value ($ReadmeIntro + [Environment]::NewLine + $ReadmeOriginal) -Encoding UTF8
 Copy-Item (Join-Path $R2 "NATIVE-AUDIT.md") (Join-Path $Stage "NATIVE-AUDIT.md")
@@ -56,7 +56,7 @@ if ($Installer -notmatch 'requires HITMAN 3.290.1' -or $Installer -notmatch 'Ass
 }
 Set-Content -Path (Join-Path $Stage "installer.ps1") -Value $Installer -Encoding UTF8
 
-$R21 = Join-Path $OutDir "HitmanCoop-0.12.10-3290-sdk420-EXPERIMENTAL-R2.11-FRIENDLY-FIRE-FIX"
+$R21 = Join-Path $OutDir "HitmanCoop-0.12.11-3290-sdk420-EXPERIMENTAL-R2.12-FIST-DUEL-TEST"
 $Zip21 = "$R21.zip"
 Remove-Item $R21,$Zip21 -Recurse -Force -ErrorAction SilentlyContinue
 Copy-Item -Path $R2 -Destination $R21 -Recurse
@@ -67,7 +67,7 @@ Set-Content (Join-Path $R21 "SHA256SUMS.txt") -Value $checks -Encoding ascii
 Compress-Archive -Path $R21 -DestinationPath $Zip21 -CompressionLevel Optimal -Force
 $ZipHash = (Get-FileHash -Algorithm SHA256 $Zip21).Hash.ToLowerInvariant()
 Set-Content "$Zip21.sha256" "$ZipHash  $(Split-Path -Leaf $Zip21)"
-Write-Host "R2.11 FRIENDLY FIRE FIX ZIP: $Zip21"
+Write-Host "R2.12 FIST DUEL TEST ZIP: $Zip21"
 Compress-Archive -Path (Join-Path $Stage "*") -DestinationPath $Payload -CompressionLevel Optimal -Force
 $Icon = Join-Path $Root "installer\setup\setup.ico"
 $Manifest = Join-Path $Root "installer\setup\setup.manifest"
@@ -78,5 +78,5 @@ $Hash = (Get-FileHash -Algorithm SHA256 $Setup).Hash.ToLowerInvariant()
 Set-Content -Path "$Setup.sha256" -Value "$Hash  $(Split-Path $Setup -Leaf)"
 Write-Host "OUTPUT: $Setup"
 Write-Host "SHA256: $Hash"
-Write-Host "NOTE: R2.11 FRIENDLY FIRE FIX: no cosmetic weapon gate; both players need v0.12.10/protocol 16 and game 3.290.1.x."
-Remove-Item $Stage,$Payload -Recurse -Force
+Write-Host "NOTE: R2.12 FIST DUEL TEST: 12-round QTE, loser stunned not animated; both players need v0.12.11/protocol 16 and game 3.290.1.x."
+Remove-Item $Stage,$Payload -Recurse -Force\r\n
