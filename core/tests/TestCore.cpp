@@ -10,6 +10,7 @@
 #include "coop/FriendlyFire.h"
 #include "coop/RuntimeCompatibility.h"
 #include "coop/BodySync.h"
+#include "coop/DisguiseVisuals.h"
 #include "coop/ItemVisibility.h"
 #include "coop/Duel.h"
 #include "coop/DuelMotion.h"
@@ -17,6 +18,36 @@
 #include "coop/Protocol.h"
 
 using namespace coop;
+
+TEST(DisguiseVisuals_KeepLateNpcPickupLockAfterVisualDeadline) {
+    using namespace disguise_visuals;
+    CHECK(NeedsRetry(false, false)); // no actor yet
+    CHECK(NeedsRetry(false, true));  // native clothing event arrived first
+    CHECK(NeedsRetry(true, false));  // still need stripped visuals
+    CHECK(!NeedsRetry(true, true));
+    CHECK(!PendingCanExpire(false, 100.0, 12.0)); // lock still missing
+    CHECK(PendingCanExpire(true, 12.0, 12.0));
+    CHECK(!PendingCanExpire(true, 11.9, 12.0));
+}
+
+TEST(DisguiseVisuals_StrippingRequiresDownedUnoccupiedBodyBeforeDeadline) {
+    using namespace disguise_visuals;
+    CHECK(CanStrip(false, true, false, 10.0, 12.0));
+    CHECK(!CanStrip(true, true, false, 10.0, 12.0));
+    CHECK(!CanStrip(false, false, false, 10.0, 12.0));
+    CHECK(!CanStrip(false, true, true, 10.0, 12.0));
+    CHECK(!CanStrip(false, true, false, 12.0, 12.0));
+}
+
+TEST(DisguiseVisuals_NativeEventCanSkipDuplicateButNotDifferentOutfit) {
+    using namespace disguise_visuals;
+    CHECK(DuplicateNativeStrip(true, true, true, true, true));
+    CHECK(!DuplicateNativeStrip(false, true, true, true, true));
+    CHECK(!DuplicateNativeStrip(true, false, true, true, true));
+    CHECK(!DuplicateNativeStrip(true, true, false, true, true));
+    CHECK(!DuplicateNativeStrip(true, true, true, false, true));
+    CHECK(!DuplicateNativeStrip(true, true, true, true, false));
+}
 
 TEST(ItemVisibility_ChildTraversalDoesNotHideUnrelatedWorldObjects) {
     struct Node { Node* child = nullptr; Node* next = nullptr; Node* parent = nullptr; };

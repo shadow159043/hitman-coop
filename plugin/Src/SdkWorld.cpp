@@ -9,6 +9,7 @@
 #include "coop/GameEvents.h"
 #include "coop/Math.h"
 #include "coop/BodySync.h"
+#include "coop/DisguiseVisuals.h"
 #include "coop/ItemVisibility.h"
 #include "coop/PartnerPresence.h"
 
@@ -339,13 +340,17 @@ void SdkWorld::BlockPeerDisguise(uint64_t p_NpcId) {
     // The outfit packet already identified the exact NPC whose disguise was
     // stolen. Even if the actor has not spawned or fallen locally yet, keep
     // that ID for a bounded retry of the missing visual strip.
-    if (!m_AppliedPeerDisguiseStrips.contains(p_NpcId) &&
+    // Keep pending source IDs even when the native outfit event was already
+    // applied: the lock still needs installing if this actor spawns late.
+    // Expired visual retries are retained ONLY until their pickup lock exists.
+    if (coop::disguise_visuals::NeedsRetry(m_PeerDisguiseLocks.contains(p_NpcId),
+                                           m_AppliedPeerDisguiseStrips.contains(p_NpcId)) &&
         (m_PendingPeerDisguiseStrips.contains(p_NpcId) ||
          m_PendingPeerDisguiseStrips.size() < 64))
         m_PendingPeerDisguiseStrips.try_emplace(p_NpcId, m_Now + 12.0);
 
     ZActor* s_Actor = FindNpc(p_NpcId);
-    if (!s_Actor || s_Actor == m_PartnerActor)
+    if (!s_Actor || !s_Actor->m_bEnabled || s_Actor == m_PartnerActor)
         return;
 
     if (!m_PeerDisguiseLocks.contains(p_NpcId)) {
@@ -357,7 +362,10 @@ void SdkWorld::BlockPeerDisguise(uint64_t p_NpcId) {
         if (m_Trace)
             m_Trace("disguise: body " + std::to_string(p_NpcId) + " used by partner; local pickup disabled");
     }
-    if (m_PendingPeerDisguiseStrips.contains(p_NpcId) && TryApplyPeerDisguiseStrip(p_NpcId))
+    if (auto pending = m_PendingPeerDisguiseStrips.find(p_NpcId);
+        pending != m_PendingPeerDisguiseStrips.end() &&
+        (m_AppliedPeerDisguiseStrips.contains(p_NpcId) ||
+         TryApplyPeerDisguiseStrip(p_NpcId, pending->second)))
         m_PendingPeerDisguiseStrips.erase(p_NpcId);
 }
 
@@ -3120,12 +3128,29 @@ void SdkWorld::RememberBodyOutfit(Body& body, ZActor* actor) {
     body.outfitVariation = actor->m_nOutfitVariation;
 }
 
-bool SdkWorld::TryApplyPeerDisguiseStrip(uint64_t id) {
+namespace {
+// The native outfit setter indexes through both collections. Validate every
+// level before passing an outfit received from the network to the engine.
+bool ValidNpcOutfitVariant(ZGlobalOutfitKit* kit, int32_t charset, int32_t variation) {
+    if (!kit || charset < 0 || variation < 0 || variation > 255 ||
+        static_cast<size_t>(charset) >= kit->m_aCharSets.size()) return false;
+    ZOutfitVariationCollection* collection = kit->m_aCharSets[charset].m_pInterfaceRef;
+    constexpr size_t actorType = static_cast<size_t>(ECharSetCharacterType::ECSCT_Actor);
+    if (!collection || actorType >= collection->m_aCharacters.size()) return false;
+    ZCharsetCharacterType* actor = collection->m_aCharacters[actorType].m_pInterfaceRef;
+    return actor && static_cast<size_t>(variation) < actor->m_aVariations.size() &&
+        actor->m_aVariations[variation].m_pInterfaceRef;
+}
+}
+
+bool SdkWorld::TryApplyPeerDisguiseStrip(uint64_t id, double deadline) {
     if (m_AppliedPeerDisguiseStrips.contains(id)) return true;
     ZActor* actor = FindNpc(id);
-    // A remote costume change must never interrupt the local player's active
-    // takedown, or strip an NPC that is still standing in this simulation.
-    if (!actor || actor == m_PartnerActor || actor == m_LocalVictim || !ActorDown(actor))
+    // Do not rebuild bodies still involved in local or streamed takedowns.
+    // Nor should an expired visual retry ever rebuild a late-spawning actor.
+    if (!actor || !actor->m_bEnabled || actor == m_PartnerActor ||
+        actor == m_RemoteVictim || !coop::disguise_visuals::CanStrip(false,
+            ActorDown(actor), actor == m_LocalVictim, m_Now, deadline))
         return false;
 
     // The outfit-source packet contains the body ID but not a kit. Use this
@@ -3134,16 +3159,16 @@ bool SdkWorld::TryApplyPeerDisguiseStrip(uint64_t id) {
     const auto kit = actor->m_rOutfit;
     const int32_t charset = actor->m_nOutfitCharset;
     const int32_t variation = actor->m_nOutfitVariation;
-    if (!kit.m_pInterfaceRef || charset < 0 || variation < 0 || variation > 255 ||
-        static_cast<size_t>(charset) >= kit.m_pInterfaceRef->m_aCharSets.size())
+    if (!ValidNpcOutfitVariant(kit.m_pInterfaceRef, charset, variation))
         return false;
 
     m_ApplyingBodyOutfit = true; // Don't echo our synthetic visual change.
     Functions::ZActor_SetOutfit->Call(actor, kit, charset, variation, true);
     m_ApplyingBodyOutfit = false;
-    auto& body = m_Bodies[id];
-    if (body.downAt <= 0.0) body.downAt = m_Now;
-    RememberBodyOutfit(body, actor);
+    // Never create a half-initialized Body record here: normal body scanning
+    // must establish its initial location and dragging baseline first.
+    if (auto it = m_Bodies.find(id); it != m_Bodies.end())
+        RememberBodyOutfit(it->second, actor);
     m_AppliedPeerDisguiseStrips.insert(id);
     if (m_Trace) m_Trace("disguise: native visual strip applied to peer-used body " + std::to_string(id));
     return true;
@@ -3182,48 +3207,48 @@ void SdkWorld::ApplyPeerBodyOutfit(const std::string& data) {
         variation > 255 || (nude != 0 && nude != 1)) return;
     auto* actor = FindNpc(id);
     const auto* kit = FindOutfitKit(repo);
-    if (!kit || !kit->m_pInterfaceRef ||
-        static_cast<size_t>(charset) >= kit->m_pInterfaceRef->m_aCharSets.size()) return;
+    if (!kit || !ValidNpcOutfitVariant(kit->m_pInterfaceRef, charset, variation)) return;
     // The reliable outfit event can arrive before the remote NPC's pacify
     // is reflected locally; remember it briefly rather than losing clothing.
-    if (!actor || !ActorDown(actor)) {
-        if (m_PendingBodyOutfits.size() < 64 || m_PendingBodyOutfits.contains(id))
-            m_PendingBodyOutfits[id] = {data, m_Now + 12.0};
+    if (actor == m_PartnerActor) return;
+    if (!actor || !actor->m_bEnabled || !ActorDown(actor) ||
+        actor == m_LocalVictim || actor == m_RemoteVictim) {
+        if (auto pending = m_PendingBodyOutfits.find(id); pending != m_PendingBodyOutfits.end())
+            pending->second.first = data; // Latest outfit wins without extending the deadline.
+        else if (m_PendingBodyOutfits.size() < 64)
+            m_PendingBodyOutfits.emplace(id, std::make_pair(data, m_Now + 12.0));
         return;
     }
-    if (actor == m_PartnerActor || actor == m_LocalVictim) return;
-    // Keep peer-driven native outfit changes from echoing to their sender.
-    m_ApplyingBodyOutfit = true;
-    Functions::ZActor_SetOutfit->Call(actor, *kit, charset, variation, nude == 1);
-    m_ApplyingBodyOutfit = false;
-    auto& body = m_Bodies[id];
-    if (body.downAt <= 0.0) body.downAt = m_Now;
-    RememberBodyOutfit(body, actor);
+    // A delayed native strip can arrive after the source-ID fallback. If it
+    // describes the already-applied kit/variation, don't rebuild the skeleton
+    // a second time. An actual different kit/variation remains authoritative.
+    const bool duplicateStrip = coop::disguise_visuals::DuplicateNativeStrip(
+        m_AppliedPeerDisguiseStrips.contains(id), nude == 1,
+        actor->m_rOutfit.m_pInterfaceRef == kit->m_pInterfaceRef,
+        actor->m_nOutfitCharset == charset, actor->m_nOutfitVariation == variation);
+    if (!duplicateStrip) {
+        // Keep peer-driven native outfit changes from echoing to their sender.
+        m_ApplyingBodyOutfit = true;
+        Functions::ZActor_SetOutfit->Call(actor, *kit, charset, variation, nude == 1);
+        m_ApplyingBodyOutfit = false;
+    }
+    // Don't create a Body record before normal scanning initialized the
+    // resting position; that previously corrupted body movement baselines.
+    if (auto it = m_Bodies.find(id); it != m_Bodies.end())
+        RememberBodyOutfit(it->second, actor);
     m_PendingBodyOutfits.erase(id);
     if (nude == 1) {
-        // If the native outfit event already stripped this body, the outfit-ID
-        // fallback must not request a second native rebuild of its skeleton.
         m_AppliedPeerDisguiseStrips.insert(id);
-        m_PendingPeerDisguiseStrips.erase(id);
+        // Keep the retry entry if the NPC's pickup lock has not yet been
+        // installed; the delayed actor must still become unlootable.
+        if (m_PeerDisguiseLocks.contains(id))
+            m_PendingPeerDisguiseStrips.erase(id);
     }
     if (m_Trace) m_Trace("body: partner changed clothing on " + std::to_string(id) +
         (nude ? " (stripped)" : ""));
 }
 
 void SdkWorld::CollectBodyChanges(std::vector<coop::ItemChange>& p_Out) {
-    // The peer outfit-source packet may beat this body's locally reflected
-    // knockdown state. Retry without sending new network messages or altering
-    // our local pickup behavior; never retry past the bounded deadline.
-    for (auto it = m_PendingPeerDisguiseStrips.begin(); it != m_PendingPeerDisguiseStrips.end();) {
-        if (m_Now >= it->second) {
-            if (m_Trace) m_Trace("disguise: visual strip expired waiting for body " + std::to_string(it->first));
-            it = m_PendingPeerDisguiseStrips.erase(it);
-            continue;
-        }
-        const uint64_t id = it->first;
-        ++it;
-        BlockPeerDisguise(id);
-    }
     if (m_NpcsById.empty())
         return;
 
@@ -3233,11 +3258,29 @@ void SdkWorld::CollectBodyChanges(std::vector<coop::ItemChange>& p_Out) {
             continue;
         }
         const auto* npc = FindNpc(it->first);
-        if (npc && ActorDown(const_cast<ZActor*>(npc))) {
+        if (npc && npc->m_bEnabled && npc != m_LocalVictim &&
+            npc != m_RemoteVictim && ActorDown(const_cast<ZActor*>(npc))) {
             const std::string text = it->second.first;
             it = m_PendingBodyOutfits.erase(it);
             ApplyPeerBodyOutfit(text);
         } else ++it;
+    }
+
+    // Authoritative body-outfit events take priority over the source-ID visual
+    // fallback; this ordering avoids two native skeleton rebuilds in one tick.
+    // An expired visual request must still install the gameplay pickup lock
+    // if the NPC spawned late, but can never trigger another outfit rebuild.
+    for (auto it = m_PendingPeerDisguiseStrips.begin(); it != m_PendingPeerDisguiseStrips.end();) {
+        if (coop::disguise_visuals::PendingCanExpire(
+            m_PeerDisguiseLocks.contains(it->first), m_Now, it->second)) {
+            if (!m_AppliedPeerDisguiseStrips.contains(it->first) && m_Trace)
+                m_Trace("disguise: visual strip expired waiting for body " + std::to_string(it->first));
+            it = m_PendingPeerDisguiseStrips.erase(it);
+            continue;
+        }
+        const uint64_t id = it->first;
+        ++it;
+        BlockPeerDisguise(id);
     }
 
     for (const auto& [s_Id, s_Actor] : m_NpcsById) {
