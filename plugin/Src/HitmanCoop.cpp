@@ -2,6 +2,7 @@
 #include "CoopText.h"
 #include "coop/PartnerPresence.h"
 #include "coop/FriendlyFire.h"
+#include "coop/RuntimeCompatibility.h"
 #include "CrashTrace.h"
 #include "CrashGuards.h"
 #include "GamePause.h"
@@ -64,7 +65,7 @@ static std::string ToLowerCopy(std::string p_Value) {
 
 // Fail closed before game-memory patches if an experimental 3.290 build is loaded
 // with the older August SDK runtime. Matching headers are not enough: the DLL
-// installed beside HITMAN3.exe must be the SDK 4.2.0 binary too.
+// installed beside HITMAN3.exe must match our tested SDK 4.2.1 runtime.
 static std::string ModuleFileVersion(HMODULE s_Module) {
     wchar_t s_Path[MAX_PATH] {};
     if (!s_Module || !GetModuleFileNameW(s_Module, s_Path, MAX_PATH))
@@ -138,9 +139,10 @@ void HitmanCoop::Init() {
     // SDK runtime do not match the verified pairing of SDK headers/runtime.
     const std::string s_FullGameVersion = ModuleFileVersion(GetModuleHandleW(nullptr));
     const std::string s_SdkRuntime = ModuleFileVersion(GetModuleHandleW(L"ZHMModSDK.dll"));
-    if (s_FullGameVersion != "3.290.1.0" || s_SdkRuntime != "4.2.0.0") {
-        m_Unsupported = "game 3.290.1.0 with ZHMModSDK runtime 4.2.0.0 required (loaded " +
-            s_FullGameVersion + " / " + s_SdkRuntime + ")";
+    if (!coop::runtime_compat::Supported(s_FullGameVersion, s_SdkRuntime)) {
+        m_Unsupported = "HITMAN " + std::string(coop::runtime_compat::kGameVersion) +
+            " with ZHMModSDK " + std::string(coop::runtime_compat::kSdkVersion) +
+            " required (loaded " + s_FullGameVersion + " / " + s_SdkRuntime + ")";
         Logger::Error("[HitmanCoop] Experimental build blocked before native hooks: {}", m_Unsupported);
         return;
     }

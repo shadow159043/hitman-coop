@@ -8,12 +8,22 @@
 #include "coop/Connection.h"
 #include "coop/Interpolation.h"
 #include "coop/FriendlyFire.h"
+#include "coop/RuntimeCompatibility.h"
 #include "coop/Duel.h"
 #include "coop/DuelMotion.h"
 #include "coop/DuelSkeleton.h"
 #include "coop/Protocol.h"
 
 using namespace coop;
+
+TEST(RuntimeCompatibility_Sdk421GuardIsExactAndRejectsOthers) {
+    CHECK(runtime_compat::Supported("3.290.1.0", "4.2.1.0"));
+    CHECK(!runtime_compat::Supported("3.290.1.0", "4.2.0.0")); // R2.15 regression
+    CHECK(!runtime_compat::Supported("3.290.1.0", "unknown"));
+    CHECK(!runtime_compat::Supported("3.290.0.0", "4.2.1.0"));
+    CHECK(!runtime_compat::Supported("unknown", "4.2.1.0"));
+    CHECK(!runtime_compat::Supported("3.290.1.0", ""));
+}
 
 TEST(Duel_ReactionSpeedAdjudicationIsHostIndependent) {
     CHECK(duel::Judge(140, 230) == 1);

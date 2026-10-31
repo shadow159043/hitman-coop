@@ -723,9 +723,10 @@ void HitmanCoop::DrawHeader(const coop::SessionStatus& p_Status, bool p_InMissio
     if (!m_Unsupported.empty()) {
         ImGui::PushStyleColor(ImGuiCol_Text, c_Red);
         ImGui::TextWrapped(
-            "This game version (%s) isn't compatible with HITMAN Co-op %s: the mod loader couldn't find %s in it. "
-            "Co-op stays off so nothing can break. Update the game, then get the HITMAN Co-op build made for it.",
-            m_GameVersion.c_str(), c_ModVersion, m_Unsupported.c_str());
+            "HITMAN Co-op %s has blocked multiplayer because its exact game/SDK version check failed: %s. "
+            "Co-op stays off to protect your game. Install the matching Artur Edition build and SDK; "
+            "do not update or reinstall HITMAN unless its game version is actually wrong.",
+            c_ModVersion, m_Unsupported.c_str());
         ImGui::PopStyleColor();
     }
 }
