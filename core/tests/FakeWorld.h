@@ -91,6 +91,7 @@ public:
     void BlockPeerDisguise(uint64_t p_NpcId) override { blockedDisguises.push_back(p_NpcId); }
 
     void ListNpcs(std::vector<coop::NpcState>& p_Out) const override {
+        ++npcListCalls;
         if (!inScene)
             return;
 
@@ -150,7 +151,7 @@ public:
         remoteSkeleton = p_Parents;
         ++remoteSkeletons;
     }
-    void ApplyPeerAlerts(const std::vector<coop::NpcAlert>& p_Alerts) override { peerAlerts = p_Alerts; }
+    void ApplyPeerAlerts(const std::vector<coop::NpcAlert>& p_Alerts) override { peerAlerts = p_Alerts; ++peerAlertApplies; }
 
     void OnPeerMissionEvent(const std::string& p_Name, const std::string& p_Json) override {
         peerEvents.push_back(p_Name + ":" + p_Json);
@@ -251,6 +252,8 @@ public:
     std::vector<coop::ItemChange> itemChanges; // ours, waiting to be collected
     std::vector<coop::ItemChange> peerItems;   // the partner's, as applied
     int itemResets = 0;
+    mutable uint64_t npcListCalls = 0;
+    uint64_t peerAlertApplies = 0;
     uint64_t localDisguiseSourceId = 0;
     bool disguiseSourceReady = true;
     std::vector<uint64_t> blockedDisguises;

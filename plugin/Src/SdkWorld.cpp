@@ -2562,21 +2562,38 @@ void SdkWorld::CollectItemChanges(std::vector<coop::ItemChange>& p_Out) {
         return;
 
     m_NextItemScan = m_Now + 0.1;
+    // Inventory IDs can repeat across template instances; ForEachSceneItem already
+    // filters those out. Build one short-lived index PER scan rather than repeatedly
+    // walking the whole inventory (twice per lookup) for every held/pending item.
+    // The index must never outlive this scan: game entities can despawn at any time.
+    struct ScannedItem {
+        uint64_t id;
+        ZHM5Item* item;
+        ZEntityRef ref;
+    };
+    std::vector<ScannedItem> s_Items;
+    std::unordered_map<uint64_t, size_t> s_Indexes;
+    if (Globals::WorldInventory) {
+        const size_t s_Hint = std::min<size_t>(Globals::WorldInventory->m_aItems.size(), 1024);
+        s_Items.reserve(s_Hint);
+        s_Indexes.reserve(s_Hint);
+    }
+    ForEachSceneItem([&](uint64_t p_Id, ZHM5Item* p_Item, const ZEntityRef& p_Ref) {
+        s_Indexes.emplace(p_Id, s_Items.size());
+        s_Items.push_back({ p_Id, p_Item, p_Ref });
+    });
     // Late-spawning scene items may have missed a reliable peer pickup/dropped event.
-    // Keep the latest event until the matching entity exists (bounded memory).
     for (auto s_It = m_PendingPeerItems.begin(); s_It != m_PendingPeerItems.end();) {
-        ZEntityRef s_Ref;
-        if (!FindItem(s_It->first, s_Ref)) { ++s_It; continue; }
+        if (!s_Indexes.contains(s_It->first)) { ++s_It; continue; }
         const coop::ItemChange s_Event = s_It->second;
         s_It = m_PendingPeerItems.erase(s_It);
         ApplyPeerItem(s_Event);
     }
-    // Visibility is driven by the item state and sometimes re-enabled by scene scripts.
-    // Reassert a peer's held-item lock while the session is active.
+    // Visibility is driven by the game and can be re-enabled by scene scripts.
+    // Find held objects by O(1) index lookup, not another 2-pass inventory walk.
     for (const uint64_t s_Id : m_PeerHeldItems) {
-        ZEntityRef s_Ref;
-        if (ZHM5Item* s_Item = FindItem(s_Id, s_Ref))
-            SetItemShown(s_Item, false);
+        if (const auto s_It = s_Indexes.find(s_Id); s_It != s_Indexes.end())
+            SetItemShown(s_Items[s_It->second].item, false);
     }
     CollectDoorChanges(p_Out);
     CollectBodyChanges(p_Out);
@@ -2585,9 +2602,12 @@ void SdkWorld::CollectItemChanges(std::vector<coop::ItemChange>& p_Out) {
     if (!s_Player)
         return;
 
-    ForEachSceneItem([&](uint64_t p_Id, ZHM5Item* p_Item, const ZEntityRef& p_Ref) {
+    for (const auto& s_Entry : s_Items) {
+        const uint64_t p_Id = s_Entry.id;
+        ZHM5Item* p_Item = s_Entry.item;
+        const ZEntityRef& p_Ref = s_Entry.ref;
         if (m_PeerHeldItems.contains(p_Id))
-            return;
+            continue;
 
         auto s_It = m_Items.find(p_Id);
         bool s_Ours = p_Item->m_pOwner == s_Player.m_entityRef;
@@ -2597,22 +2617,26 @@ void SdkWorld::CollectItemChanges(std::vector<coop::ItemChange>& p_Out) {
             p_Item->m_rItemOwned.m_entityRef &&
             !p_Item->m_rItemOwned.m_entityRef.GetProperty<bool>("m_bValue").Get())
             s_Ours = false;
-        const std::string s_Repo = p_Item->m_pItemConfigDescriptor ?
-            p_Item->m_pItemConfigDescriptor->m_ItemID.ToString().c_str() : std::string();
+        // Repository GUID formatting is relatively expensive. Most world items are
+        // unchanged; only resolve the GUID if we actually emit a pickup/drop update.
+        const auto s_Repo = [&]() -> std::string {
+            return p_Item->m_pItemConfigDescriptor ?
+                p_Item->m_pItemConfigDescriptor->m_ItemID.ToString().c_str() : std::string();
+        };
 
         if (s_Ours && (s_It == m_Items.end() || !s_It->second.ours)) {
             m_Items[p_Id] = { true, 0.0, {} };
-            p_Out.push_back({ p_Id, coop::ItemFlag_Taken, {}, s_Repo });
-            return;
+            p_Out.push_back({ p_Id, coop::ItemFlag_Taken, {}, s_Repo() });
+            continue;
         }
 
         if (s_Ours || s_It == m_Items.end())
-            return;
+            continue;
 
         const auto* s_Spatial = p_Ref.QueryInterface<ZSpatialEntity>();
 
         if (!s_Spatial)
-            return;
+            continue;
 
         const coop::Transform s_Xf = ToTransform(s_Spatial->GetObjectToWorldMatrix());
         auto& s_Tracked = s_It->second;
@@ -2620,21 +2644,21 @@ void SdkWorld::CollectItemChanges(std::vector<coop::ItemChange>& p_Out) {
         // Let go of (dropped, placed, thrown): back in the world, followed while it moves.
         if (s_Tracked.ours) {
             s_Tracked = { false, m_Now + 4.0, s_Xf };
-            p_Out.push_back({ p_Id, 0, s_Xf, s_Repo });
-            return;
+            p_Out.push_back({ p_Id, 0, s_Xf, s_Repo() });
+            continue;
         }
 
         if (m_Now > s_Tracked.followUntil) {
             m_Items.erase(s_It);
-            return;
+            continue;
         }
 
         if (coop::Distance(s_Xf.pos, s_Tracked.sent.pos) > 0.02f || coop::AngleBetween(s_Xf.rot, s_Tracked.sent.rot) > 0.02f) {
             s_Tracked.sent = s_Xf;
             s_Tracked.followUntil = std::max(s_Tracked.followUntil, m_Now + 1.0);
-            p_Out.push_back({ p_Id, 0, s_Xf, s_Repo });
+            p_Out.push_back({ p_Id, 0, s_Xf, s_Repo() });
         }
-    });
+    }
 }
 
 void SdkWorld::ResetItems() {

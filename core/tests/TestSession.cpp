@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 #include "FakeWorld.h"
 #include "SimNetwork.h"
@@ -608,6 +609,55 @@ TEST(Session_NearNpcsStayCloseUnderLag) {
     CHECK(s_Near >= 5);
     // NPCs walk 1.2 m/s, played back about 0.2 s behind.
     CHECK_MSG(s_Worst < 0.6f, "worst near NPC %.2f m behind", s_Worst);
+}
+
+// SDK NPC enumeration should be scheduled, not performed 60 times per second.
+// This test uses 120 NPCs and a 60 Hz render/simulation loop to guard the hot path.
+TEST(Session_ActorScansAreBoundedToConfiguredRate) {
+    Duo d(97);
+    d.HostLoads(c_Miami, 120);
+    d.ClientLoads(c_Miami, 120, 0.f);
+    d.Start();
+    REQUIRE(d.StepUntilSynced(3.0));
+    d.Step(0.5);
+    const auto s_HostBefore = d.hostWorld.npcListCalls;
+    const auto s_ClientBefore = d.clientWorld.npcListCalls;
+    d.Step(3.0);
+    const auto s_HostScans = d.hostWorld.npcListCalls - s_HostBefore;
+    const auto s_ClientScans = d.clientWorld.npcListCalls - s_ClientBefore;
+    std::printf("PERF simulated 3s @ 60fps: host NPC enumerations=%llu, client=%llu (old ~180 each)\n",
+        static_cast<unsigned long long>(s_HostScans), static_cast<unsigned long long>(s_ClientScans));
+    // Baseline was roughly 180 enumerations over three seconds on each machine.
+    CHECK_MSG(s_HostScans <= 100, "host enumerated NPCs %llu times (max 100 per 3s)",
+        static_cast<unsigned long long>(s_HostScans));
+    CHECK_MSG(s_ClientScans <= 100, "client enumerated NPCs %llu times (max 100 per 3s)",
+        static_cast<unsigned long long>(s_ClientScans));
+    CHECK(d.host.Status().state == SessionState::Connected);
+    CHECK(d.client.Status().state == SessionState::Connected);
+}
+
+TEST(Session_UnchangedAlertsUseHeartbeatButChangesArrivePromptly) {
+    Duo d(98);
+    d.HostLoads(c_Miami, 3);
+    d.ClientLoads(c_Miami, 3, 0.f);
+    d.Start();
+    REQUIRE(d.StepUntilSynced(3.0));
+    d.Step(0.5);
+    const auto s_Applies = d.clientWorld.peerAlertApplies;
+    d.Step(2.0);
+    const auto s_Unchanged = d.clientWorld.peerAlertApplies - s_Applies;
+    std::printf("PERF simulated 2s steady alerts: %llu messages (old ~10)\n",
+        static_cast<unsigned long long>(s_Unchanged));
+    // Baseline was 10 unchanged packets in 2 s; optimized heartbeat uses ~5.
+    CHECK_MSG(s_Unchanged <= 7, "received %llu unchanged alerts in 2s",
+        static_cast<unsigned long long>(s_Unchanged));
+    d.hostWorld.alerts = { { 0x1000, 4 } };
+    d.Step(0.35);
+    REQUIRE(d.clientWorld.peerAlerts.size() == 1);
+    CHECK(d.clientWorld.peerAlerts[0].id == 0x1000);
+    d.hostWorld.alerts.clear();
+    d.Step(0.35);
+    CHECK(d.clientWorld.peerAlerts.empty());
 }
 
 // NPCs far from the partner cost a fraction of what they did at the full rate.

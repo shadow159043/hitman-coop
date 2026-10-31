@@ -197,6 +197,10 @@ void Session::ResetSceneState() {
     m_KnownDown.clear();
     m_PoseSent.clear();
     m_NpcCacheValid = false;
+    m_NextNpcCacheRefresh = 0.0;
+    m_NextNpcReconcile = 0.0;
+    m_LastAlertPacket.clear();
+    m_LastAlertPacketAt = -100.0;
     m_ToldAboutMismatch = false;
 }
 
@@ -414,7 +418,12 @@ void Session::Tick(double p_Now, float p_Dt) {
         m_StallGraceUntil = p_Now + 3.0;
 
     m_LastTick = p_Now;
-    m_NpcCacheValid = false;
+    // Never re-enumerate all game actors at the render FPS. Reuse this snapshot for
+    // up to 1/npcScanRate seconds across owner, pose, combat and death checks.
+    if (p_Now >= m_NextNpcCacheRefresh) {
+        m_NpcCacheValid = false;
+        m_NextNpcCacheRefresh = p_Now + 1.0 / std::clamp(m_Config.npcScanRate, 15.0, 60.0);
+    }
     ReceivePackets(p_Now);
 
     if (m_Role == SessionRole::None)
@@ -1245,7 +1254,15 @@ void Session::UpdateAlerts(double p_Now) {
     m_AlertSend.epoch = m_Epoch;
     m_AlertSend.alerts.clear();
     m_World.CollectAlerts(m_AlertSend.alerts);
-    m_Conn->SendUnreliable(MsgType::Alerts, Encode(m_AlertSend));
+    auto s_Packet = Encode(m_AlertSend);
+    // Same alerts were sent just a moment ago: save bandwidth without delaying
+    // new combat alerts. Refresh unchanged states every 0.4s, well inside the
+    // 1-second alert-floor retention on the receiving SDK.
+    if (s_Packet == m_LastAlertPacket && p_Now - m_LastAlertPacketAt < 0.4)
+        return;
+    m_Conn->SendUnreliable(MsgType::Alerts, s_Packet);
+    m_LastAlertPacket = std::move(s_Packet);
+    m_LastAlertPacketAt = p_Now;
 }
 
 const std::vector<NpcState>& Session::Npcs() {
@@ -1492,9 +1509,15 @@ void Session::UpdateSharedNpcs(double p_Now) {
             ReconcilePuppets(); // NPCs that appeared or died since
     }
 
-    // Re-evaluate local combat on both machines even when ownership is unchanged. This
-    // releases puppets during nearby melee and resumes them when the fight is over.
-    ReconcilePuppets();
+    // Re-evaluate local combat at the configured NPC scan rate rather than on every
+    // render frame. ListNpcs walks every activated actor and was previously called at
+    // 60+ Hz even though combat and ownership already have scheduled updates.
+    // A 30 Hz default preserves quick melee reactions (within ~33 ms), while
+    // avoiding a redundant all-actor walk on the intervening frames.
+    if (p_Now >= m_NextNpcReconcile) {
+        m_NextNpcReconcile = p_Now + 1.0 / std::clamp(m_Config.npcScanRate, 15.0, 60.0);
+        ReconcilePuppets();
+    }
 
     // The NPCs we run, to the partner: those that moved, and every one now and then. Those far
     // from the partner (who only sees them from afar) a quarter as often.

@@ -97,7 +97,7 @@ public:
 
 struct SessionConfig {
     std::string playerName = "Agent";
-    std::string modVersion = "0.12.7";
+    std::string modVersion = "0.12.8";
     std::string gameVersion = "unknown";
     std::string roomCode;    // Host's expected code; client's code to present at handshake.
     std::string roomPassword; // Optional host password / client entry (not saved to configuration).
@@ -257,10 +257,11 @@ private:
     bool m_SentPause = false;
     bool m_PartnerPaused = false;
 
-    // Every NPC, listed once a tick at most (each list walks every actor in the level).
+    // Every NPC, enumerated at most npcScanRate times/sec (listing walks the level).
     const std::vector<NpcState>& Npcs();
     std::vector<NpcState> m_NpcCache;
     bool m_NpcCacheValid = false;
+    double m_NextNpcCacheRefresh = 0.0; // SDK actor enumeration is at most npcScanRate Hz.
 
     // The link: congestion (less NPC detail while it lasts) and the bandwidth we use.
     void UpdateLink(double p_Now);
@@ -403,6 +404,7 @@ private:
     uint32_t m_NpcTick = 0;
     double m_NextNpcSend = 0.0;
     double m_NextNpcScan = 0.0;
+    double m_NextNpcReconcile = 0.0; // Avoid expensive all-actor scans on every rendered frame.
     float m_NpcScanDt = 0.f;
     std::unordered_map<uint64_t, bool> m_HostNpcAlive;      // host: last seen alive state
     std::unordered_map<uint64_t, NpcState> m_HostNpcs;      // client: latest host state
@@ -443,6 +445,8 @@ private:
     std::vector<ItemChange> m_ItemScratch;
     MsgAlerts m_AlertSend;
     double m_NextAlertSend = 0.0;
+    double m_LastAlertPacketAt = -100.0;
+    std::vector<uint8_t> m_LastAlertPacket; // Skip redundant alert updates, but send a frequent heartbeat.
     std::vector<std::vector<uint8_t>> m_OutScratch;
 };
 
