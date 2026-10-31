@@ -1,5 +1,5 @@
-# Inspect a built setup without running INSTALL or modifying the game.
-param([string]$SetupPath = (Join-Path $PSScriptRoot "..\_dist\HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.10-FRIENDLY-FIRE-TEST.exe"))
+﻿# Inspect a built setup without running INSTALL or modifying the game.
+param([string]$SetupPath = (Join-Path $PSScriptRoot "..\_dist\HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.11-FRIENDLY-FIRE-FIX.exe"))
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -34,7 +34,7 @@ try {
     }
     Write-Output ("PASS: Embedded installer detected HITMAN: " + ($Actual -join "; "))
 
-    $Zip = Join-Path $Root "_dist\HitmanCoop-0.12.9-3290-sdk420-EXPERIMENTAL-R2.10-FRIENDLY-FIRE-TEST.zip"
+    $Zip = Join-Path $Root "_dist\HitmanCoop-0.12.10-3290-sdk420-EXPERIMENTAL-R2.11-FRIENDLY-FIRE-FIX.zip"
     $Archive = [IO.Compression.ZipFile]::OpenRead($Zip)
     try {
         $Plugin = @($Archive.Entries | Where-Object { $_.FullName -match '(?i)[\\/]Retail[\\/]mods[\\/]HitmanCoop.dll$' }) | Select-Object -First 1
@@ -46,7 +46,7 @@ try {
         if ($ActualHash -ne (Get-FileHash $OriginalDll).Hash) {throw "R2.2 ZIP does not match compiled plugin"}
     }
     finally { $Archive.Dispose() }
-    Write-Output "PASS: R2.10 friendly-fire ZIP has the identical branded plugin"
+    Write-Output "PASS: R2.11 friendly-fire ZIP has the identical branded plugin"
     Write-Output "PASS: All package checks completed; no game files changed"
 }
 finally {

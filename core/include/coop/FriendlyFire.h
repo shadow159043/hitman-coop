@@ -6,6 +6,13 @@
 
 namespace coop::friendly_fire {
 
+// Decide whether a stand-in hit may become a player-damage event.
+// IMPORTANT: do not depend on LocalHeldWeapon or held-weapon cosmetic detection.
+// The old gate was unreliable and mislabeled enabled friendly fire as off.
+inline bool ShouldSendDamage(bool p_FriendlyFireEnabled, bool p_BothInSameMission) {
+    return p_FriendlyFireEnabled && p_BothInSameMission;
+}
+
 // Strictly bounded text in the existing reliable co-op MissionEvent. Never trust
 // peer-provided health/damage values: only a hit count may cross the network.
 inline int ParseHits(std::string_view p_Value) {

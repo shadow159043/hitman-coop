@@ -728,12 +728,19 @@ bool HitmanCoop::OnTeamEvent(const std::string& p_Name, const std::string& p_Jso
     if (p_Name == "Coop_FriendlyDamage") {
         // Reliable co-op event, but contents are still untrusted: only accept
         // one digit 1..3, only in a synced mission, with local opt-in and a cap.
-        ApplyFriendlyDamage(coop::friendly_fire::ParseHits(p_Json));
+        const int s_Hits = coop::friendly_fire::ParseHits(p_Json);
+        const bool s_Applied = ApplyFriendlyDamage(s_Hits);
+        if (s_Hits > 0)
+            AppendLog(std::string("friendly-fire: received ") + std::to_string(s_Hits) +
+                " hit(s), local option " + (m_FriendlyFireSetting ? "ON" : "OFF") +
+                (s_Applied ? ", HP reduced" : ", ignored (scene/health/option gate)"));
         return true;
     }
 
     if (p_Name == "Coop_FriendlyFire") {
-        m_World.NotifyAs(SdkWorld::ToastKind::Partner, s_Partner + " hit your stand-in (no damage; friendly fire off).");
+        m_World.NotifyAs(SdkWorld::ToastKind::Partner, m_FriendlyFireSetting ?
+            s_Partner + " hit your stand-in, but their game sent a harmless-hit notice. Check their friendly-fire setting and R2.11 version." :
+            s_Partner + " hit your stand-in (no damage; the shooter's friendly fire is off).");
         return true;
     }
 
@@ -1353,16 +1360,22 @@ void HitmanCoop::OnFrameUpdate(const SGameUpdateEvent& p_UpdateEvent) {
     UpdateWaitForPartner(s_Now, m_FrameStatus);
     m_World.UpdateRestart(m_LevelState == static_cast<int>(ZLevelManager::EGameState::EGS_Playing));
 
-    // The hit detour only counts impacts on the protected remote stand-in.
-    // Transfer bounded HP damage only when THIS player explicitly opted in and
-    // is holding a firearm (the hit SDK callback lacks reliable source data).
-    if (m_FrameStatus.synced && m_FriendlyFireSetting && m_World.LocalHeldWeapon()) {
+    // The hook counts impacts on the protected remote stand-in. R2.10 incorrectly
+    // required LocalHeldWeapon(), which is a best-effort COSMETIC inventory
+    // detector. It often returned false for equipped firearms and caused the
+    // misleading "friendly fire is off" notification even with the checkbox ON.
+    // Do not use that cosmetic detector to gate damage. This remains experimental:
+    // SHitInfo in this SDK does not expose a verified attacker, so an NPC hit on
+    // the stand-in can also register; both players opt in and received HP is capped.
+    if (coop::friendly_fire::ShouldSendDamage(m_FriendlyFireSetting, m_FrameStatus.synced)) {
         if (s_Now - m_LastFriendlyDamageSentAt >= 0.2) {
             const int s_Hits = m_FriendlyHits.exchange(0);
             if (s_Hits > 0) {
                 m_LastFriendlyDamageSentAt = s_Now;
                 const int s_Send = std::clamp(s_Hits, 1, 3);
                 m_Session->SendMissionEvent("Coop_FriendlyDamage", std::to_string(s_Send));
+                AppendLog("friendly-fire: queued " + std::to_string(s_Send) +
+                    " hit(s), sender option ON, scene synced");
                 if (s_Now - m_FriendlyToldAt > 3.0) {
                     m_FriendlyToldAt = s_Now;
                     m_World.NotifyAs(SdkWorld::ToastKind::Warning,
@@ -1372,8 +1385,10 @@ void HitmanCoop::OnFrameUpdate(const SGameUpdateEvent& p_UpdateEvent) {
         }
     }
     else {
-        // Retain the original harmless-hit notification when disabled.
-        if (const int s_Hits = m_FriendlyHits.exchange(0); s_Hits > 0 && s_Now - m_FriendlyToldAt > 6.0 && m_FrameStatus.synced) {
+        // Never claim the option is off merely because a weapon couldn't be
+        // identified. The harmless message now means the LOCAL setting is off.
+        if (const int s_Hits = m_FriendlyHits.exchange(0); s_Hits > 0 && s_Now - m_FriendlyToldAt > 6.0 &&
+            m_FrameStatus.synced && !m_FriendlyFireSetting) {
             m_FriendlyToldAt = s_Now;
             m_World.NotifyAs(SdkWorld::ToastKind::Warning,
                 "You hit " + m_FrameStatus.peerName + "'s stand-in. Friendly fire is off.");

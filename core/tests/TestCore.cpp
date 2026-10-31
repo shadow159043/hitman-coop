@@ -12,6 +12,16 @@
 
 using namespace coop;
 
+TEST(FriendlyFire_EnabledWithoutCosmeticWeaponStateSendsDamage) {
+    // Regression: R2.10's LocalHeldWeapon() returned false for some guns and
+    // incorrectly claimed friendly fire was OFF even after both players enabled it.
+    // No weapon-state input is used in this decision; it reflects the actual toggle.
+    CHECK(friendly_fire::ShouldSendDamage(true, true));
+    CHECK(!friendly_fire::ShouldSendDamage(false, true));
+    CHECK(!friendly_fire::ShouldSendDamage(true, false));
+    CHECK(!friendly_fire::ShouldSendDamage(false, false));
+}
+
 TEST(FriendlyFire_RejectsUntrustedHitsAndKeepsHealthFinite) {
     CHECK(friendly_fire::ParseHits("1") == 1);
     CHECK(friendly_fire::ParseHits("3") == 3);

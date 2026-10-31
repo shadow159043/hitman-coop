@@ -1319,8 +1319,10 @@ void HitmanCoop::DrawSettingsTab() {
         ImGui::EndDisabled();
         s_Changed |= ImGui::Checkbox("Start together (hold my mission until my partner has loaded in, up to 90 s)", &m_WaitForPartner);
         s_Changed |= ImGui::Checkbox("Reconnect by myself when the connection drops", &m_AutoReconnect);
-        s_Changed |= ImGui::Checkbox("Friendly fire (experimental: gun hits damage my health)", &m_FriendlyFire);
-        HelpMarker("Off by default. BOTH players must enable to exchange damage. Each hit on a partner stand-in transfers 12% of max health, stopping at 1 HP. The SDK cannot yet guarantee exact shooter attribution, native death animations or bullet damage; test carefully.");
+        s_Changed |= ImGui::Checkbox("Friendly fire (experimental: player-to-player damage)", &m_FriendlyFire);
+        HelpMarker("Off by default. BOTH players must enable to send/receive damage. Each hit on a partner stand-in transfers 12% of max health, stopping at 1 HP. HITMAN's hit hook cannot yet distinguish NPC shots reliably: stray hits may also transfer. No native death animations or lethal damage yet.");
+        if (m_FriendlyFire)
+            ImGui::TextDisabled("Friendly fire ON locally; enable on your friend's PC too. Experimental nonlethal HP damage.");
         s_Changed |= ImGui::Checkbox("Sounds for my partner's messages, marks and warnings", &m_Sounds);
     }
 
