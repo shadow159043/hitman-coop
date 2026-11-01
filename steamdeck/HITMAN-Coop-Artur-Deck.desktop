@@ -1,18 +1,94 @@
-#!/usr/bin/env bash
-set -uo pipefail
+# HITMAN Co-op — Artur Edition (Steam Deck / Proton)
 
-# This is a desktop launcher file for the Steam Deck package.
-# It requires the user to install the package via the Desktop Mode shell, then run
-# the script from the same directory.
+This package is a separate Steam Deck compatibility distribution for the existing Windows Artur Edition multiplayer mod. It is not a native Linux port and it does not rewrite the Windows multiplayer engine.
 
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=HITMAN Co-op — Artur Edition (Steam Deck)
-Comment=Experimental Proton launcher for HITMAN Co-op Artur Edition
-Exec=/bin/bash -lc '/home/deck/HITMAN-Coop/steamdeck/launch.sh'
-Icon=applications-games
-Terminal=true
-Categories=Game;
-StartupNotify=true
+The goal is to allow a Steam Deck owner to install the Artur Edition Windows files into the existing HITMAN World of Assassination installation and launch the game through Steam using Proton compatibility, while preserving the existing Windows multiplayer protocol and mod logic.
+
+Important:
+- This is a compatibility wrapper around the Windows Artur Edition distribution.
+- The Windows release remains the authoritative runtime.
+- Actual gameplay compatibility still requires real Steam Deck hardware testing.
+
+## What this package does
+
+- Detects Steam library installations and common Steam Deck storage locations.
+- Locates the HITMAN World of Assassination installation, including custom installation paths.
+- Preserves a bounded backup outside the game directory.
+- Installs required Artur Edition files into the target `Retail` folder.
+- Launches HITMAN through Steam using the correct App ID: `1659040`.
+- Supports direct Proton fallback for troubleshooting.
+- Provides verification, restore, and uninstall flows.
+
+## Required runtime
+
+- Steam Deck running SteamOS with Steam and Proton installed.
+- HITMAN World of Assassination installed via Steam.
+- The Windows Artur Edition package or extracted release archive available locally.
+
+## Install on Steam Deck Desktop Mode
+
+1. Copy the `steamdeck/` directory and related files to a location you can access from Desktop Mode.
+2. Open a terminal in Desktop Mode.
+3. Run:
+
+```bash
+bash steamdeck/install.sh --game /path/to/HITMAN
+```
+
+or, if you want to supply the package manually:
+
+```bash
+bash steamdeck/install.sh --game /path/to/HITMAN --package /path/to/Artur-Release
+```
+
+4. The installer will:
+   - detect and validate the game
+   - create a backup outside the game directory
+   - install the required Artur Edition files into the correct `Retail` layout
+   - record installation metadata
+
+## Launch through Steam
+
+```bash
+bash steamdeck/launch.sh
+```
+
+This prefers launching the game through Steam using the authentic App ID `1659040`.
+If Steam is unavailable, it will fall back to direct Proton launch for troubleshooting.
+
+## Verify
+
+```bash
+bash steamdeck/verify.sh --game /path/to/HITMAN
+```
+
+## Repair and restore
+
+```bash
+bash steamdeck/restore.sh --game /path/to/HITMAN
+```
+
+```bash
+bash steamdeck/uninstall.sh --game /path/to/HITMAN
+```
+
+## Known limitations
+
+- This is not a native Linux port.
+- The package uses the existing Windows runtime under Proton.
+- Real co-op gameplay compatibility on Steam Deck still needs device testing.
+- Steam friend invites and P2P behaviour depend on Proton/Steam support and the actual installed Windows mod runtime.
+
+## Compatibility notes
+
+- Preferred launch path: official Steam game entry.
+- Direct Proton path: troubleshooting only.
+- Recommended compatibility tool: Proton Experimental.
+- Overriding `dinput8` may be required for some Proton configurations, but this package does not blind-force it for every installation.
+
+## Security and safety
+
+- Backups are stored in `$XDG_STATE_HOME/hitman-coop-steamdeck/backups` or `$HOME/.local/state/hitman-coop-steamdeck/backups`.
+- The installer does not recursively copy the whole game directory.
+- Uninstall/restore is reversible and bounded to the files the package modifies.
 

@@ -6,12 +6,12 @@ source "$STEAMDECK_ROOT/lib/common.sh"
 
 usage() {
   cat <<'EOF'
-HITMAN Co-op — Artur Edition Steam Deck restore
+HITMAN Co-op — Artur Edition Steam Deck uninstall
 
 Usage:
-  ./restore.sh [--game PATH]
+  ./uninstall.sh [--game PATH]
 
-Restores the game from the most recent backup without reinstalling.
+Restores the most recent backup and removes the Steam Deck compatibility files.
 EOF
 }
 
@@ -23,7 +23,7 @@ while [[ $# -gt 0 ]]; do
       FORCED_GAME="$2"
       shift 2
       ;;
-    --help|-h)
+    -h|--help)
       usage
       exit 0
       ;;

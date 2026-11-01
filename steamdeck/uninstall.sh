@@ -6,16 +6,17 @@ source "$STEAMDECK_ROOT/lib/common.sh"
 
 usage() {
   cat <<'EOF'
-HITMAN Co-op — Artur Edition Steam Deck uninstall
+HITMAN Co-op — Artur Edition Steam Deck verification
 
 Usage:
-  ./uninstall.sh [--game PATH]
+  ./verify.sh [--game PATH] [--package PATH]
 
-Restores the game from the most recent backup, if one exists.
+Verifies that the required Artur Edition files exist in the target HITMAN installation.
 EOF
 }
 
 FORCED_GAME=""
+FORCED_PACKAGE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --game)
@@ -23,7 +24,12 @@ while [[ $# -gt 0 ]]; do
       FORCED_GAME="$2"
       shift 2
       ;;
-    --help|-h)
+    --package)
+      [[ $# -ge 2 ]] || die "--package requires a path."
+      FORCED_PACKAGE="$2"
+      shift 2
+      ;;
+    -h|--help)
       usage
       exit 0
       ;;
@@ -35,6 +41,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-restore_backup "$FORCED_GAME"
+GAME_ROOT="$(resolve_game_root "$FORCED_GAME")" || die "Unable to locate a HITMAN installation."
+PACKAGE_ROOT="$(resolve_package_root "$FORCED_PACKAGE")" || warn "No package bundle was supplied; continuing with game-only checks."
+verify_installation "$GAME_ROOT" "$PACKAGE_ROOT"
 exit $?
 
