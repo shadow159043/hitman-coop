@@ -1,0 +1,10 @@
+{
+  "artur-r2.18.1-npc-disguise-safety-20261031": {
+    "release_version": "R2.18.1",
+    "mod_version": "0.12.21",
+    "sdk_version": "4.2.1",
+    "protocol": 16,
+    "windows_zip_asset": "HitmanCoop-Artur-R2.18.1-Windows-Mod.zip",
+    "windows_setup_asset": "HitmanCoop-Artur-R2.18.1-Windows-Setup.exe"
+  }
+}

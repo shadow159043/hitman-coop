@@ -1,27 +1,29 @@
 # HITMAN Co-op
 
-## Download a version
+## Download — Artur Edition R2.18.1 (Windows and Linux / Steam Deck)
 
-**Latest Artur Edition: [Experimental R2.3 - private rooms and passwords](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.3-20261030)**
+**Latest tested version:** Artur Edition **R2.18.1**, Co-op **v0.12.21**, **protocol 16**, ZHMModSDK **4.2.1**, for HITMAN **3.290.1.0**.
 
-| Version | Status | What's different | Download |
-| --- | --- | --- | --- |
-| **Artur R2.3** | **Latest (experimental)** | Custom room codes, optional room password, join information under Leave session; keeps Steam/Epic auto-detection | [R2.3 installer / ZIP](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.3-20261030) |
-| **Artur R2.2** | Previous | Auto-detects HITMAN across Steam libraries and Epic/Heroic install records; retains Artur in-game branding | [R2.2 installer / ZIP](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.2-20261030) |
-| **Artur R2.1** | Previous | "by Artur" in-game menu and launcher; disabled Assassin Rivals 2 allowed | [R2.1 installer / ZIP](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.1-20261030) |
-| **Artur R2** | Previous (two-PC tested in Freeform Training) | Updated SDK 4.2.0 and visible/animated remote-player fixes | [R2 release](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2-20261030) |
-| **Initial experimental build (pre-R2)** | Older / not recommended | Original experimental ZIP, retained within the R2 release's assets | [Older experimental ZIP](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2-20261030) |
+**[Download the R2.18.1 release for either platform](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.18.1-npc-disguise-safety-20261031)**
 
-**[Browse all releases and previous versions](https://github.com/shadow159043/hitman-coop/releases)** · [R2.3 source tag](https://github.com/shadow159043/hitman-coop/tree/artur-r2.3-20261030) · [All source tags](https://github.com/shadow159043/hitman-coop/tags)
+| Platform | Download asset | How to launch |
+| --- | --- | --- |
+| **Windows** | `HitmanCoop-Artur-R2.18.1-Windows-Setup.exe` | Run the Windows setup, install, then start HITMAN normally from Steam |
+| **Steam Deck / Linux (Proton)** | `HitmanCoop-Artur-R2.18.1-SteamDeck-Linux-Proton.zip` | Extract, open Terminal in the folder and run `bash steamdeck/ui-install.sh --gui`; click Install, Verify, then start HITMAN through Steam |
+| Windows manual archive | `HitmanCoop-Artur-R2.18.1-Windows-Mod.zip` | For experienced manual installers; prefer the Windows setup above |
 
-> **Choose R2.3 for the new room features.** Download `HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.3.exe`. Both players MUST install **Co-op v0.12.2 / protocol 13**, matching ZHMModSDK 4.2.0 and HITMAN 3.290.1.x. The host can choose a 4-16 character room code and an optional password before HOST. A friend enters the host's LAN/Tailscale IP (or a relay join code, if configured), room code and password on the Join a friend side. **A custom room code alone cannot locate the host without a relay server.** While hosting, press `~` and find the sharing details below Leave session. The game connection is NOT encrypted; use a unique, disposable password. This build passed 84 automated tests but has not yet been tested live in-game.
->
-> This repository is **private**. Release links only work for accounts granted repository access. For ordinary installation, do **not** download the large complete-project recovery backup.
+**Windows ↔ Ubuntu multiplayer verified (November 1, 2026):** HITMAN launched under Proton Experimental on Ubuntu 24.04.5 with a physical AMD GPU; Artur Edition loaded, and Steam invitations and multiplayer between Windows and Ubuntu worked in the user's live test. **A physical Steam Deck has not been tested yet**, so the Steam Deck package remains experimental. Both players must use **R2.18.1 / protocol 16**.
+
+Read the [Windows setup](#install-on-windows) or [Steam Deck / Linux setup](#install-on-steam-deck-or-linux-proton) below before downloading. The Linux ZIP contains the Windows game mod running through Proton; it is **not** a Linux-native DLL.
+
+**[Browse previous releases](https://github.com/shadow159043/hitman-coop/releases)** · [Steam Deck/Linux detailed guide](docs/steamdeck-installation.md) · [Original R2.3 release](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.3-20261030)
+
+> This repository is **private**. Release downloads require access to this repository. Do not download the complete-project recovery backup for normal installation.
 
 ---
 
-> **Artur compatibility edition (experimental R2.3).** This fork updates the original HITMAN Co-op
-> for HITMAN 3.290.1.0 / ZHMModSDK 4.2.0. The co-op developer and original author is
+> **Artur compatibility edition (R2.18.1 / Linux Proton experimental).** This fork updates the original HITMAN Co-op
+> for HITMAN 3.290.1.0 / ZHMModSDK 4.2.1. The co-op developer and original author is
 > **Jordan Rodrigues**. Artur is credited for this edition, not as creator of the original game mod.
 > See [two-PC validation](docs/two-pc-test-20261030.md) and [credits](CREDITS.md).
 
@@ -44,10 +46,11 @@ countdown for the perfect double hit.
 
 ## Contents
 
-- [Download a version](#download-a-version)
+- [Download — Windows and Steam Deck / Linux](#download--artur-edition-r2181-windows-and-linux--steam-deck)
 - [Features](#features)
 - [Requirements](#requirements)
-- [Install](#install)
+- [Install on Windows](#install-on-windows)
+- [Install on Steam Deck or Linux (Proton)](#install-on-steam-deck-or-linux-proton)
 - [Play together](#play-together)
 - [Playing over the internet with Tailscale (recommended)](#playing-over-the-internet-with-tailscale-recommended)
 - [Controls and hotkeys](#controls-and-hotkeys)
@@ -112,34 +115,52 @@ countdown for the perfect double hit.
 
 ## Requirements
 
-- HITMAN World of Assassination on **Steam** or **Epic** (Windows).
+- HITMAN World of Assassination on **Steam** (Windows or Linux via Proton Experimental), or **Epic** (Windows).
   The Microsoft Store / Game Pass version can't be modded.
 - Both players need the **same version of HITMAN Co-op**.
 - You play together at a location **you both own** (a friend with only some locations can play
   those with you). The mod never takes anyone to a location they didn't start themselves.
-- **Artur R2.3 targets HITMAN 3.290.1.0 and ZHMModSDK 4.2.0.** The original upstream release
-  was tested on game version 3.280.0. Other game versions have not been verified for this fork.
+- **Artur R2.18.1 targets HITMAN 3.290.1.0, ZHMModSDK 4.2.1 and protocol 16.** Both players must run the same Artur Edition version. Linux requires the Steam game and Proton Experimental.
 
-## Install
+## Install on Windows
 
-> ### **Both players do this. It takes about a minute.**
->
-> 1. **Close the game.**
-> 2. **Go to the [R2.3 release](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.3-20261030) and download `HitmanCoop-Setup-by-Artur-EXPERIMENTAL-R2.3.exe`.**
->    (You don't need the source code or the complete-project archive.)
-> 3. **Run it and click INSTALL.** It finds HITMAN on Steam or Epic by itself and installs the mod
->    loader ([ZHMModSDK](https://github.com/OrfeasZ/ZHMModSDK)) and HITMAN Co-op into the game.
->    If it can't find your game, click **Browse** and pick your HITMAN 3 folder.
-> 4. **Start the game. Press `~` (the key under Esc) and you'll see CO-OP at the top.** That's it.
+1. **Close HITMAN.** Open the [Artur Edition R2.18.1 release](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.18.1-npc-disguise-safety-20261031).
+2. Download **`HitmanCoop-Artur-R2.18.1-Windows-Setup.exe`** (not the Linux ZIP).
+3. Run the installer and click **INSTALL**. Let it find HITMAN on Steam or Epic, or browse to the installed game folder.
+4. Start HITMAN normally through Steam. Press **`~`** (the key below Esc) to open ZHMModSDK, then select **CO-OP**.
+5. To uninstall, run the same Windows setup again and choose **UNINSTALL**.
 
-- **Windows SmartScreen** may say "Windows protected your PC", because the setup isn't signed by a
-  company. Click **More info**, then **Run anyway**. The setup's SHA-256 checksum is published next
-  to it on the Releases page.
-- **Prefer a ZIP?** The R2.3 ZIP is a **manual distribution**, not a one-click installer. Read
-  `READ-ME-FIRST.txt`, back up your existing Retail/SDK files and only use the manual install if
-  you know how to restore them. It does **not** include `Install.bat` or `Uninstall.bat`.
-- **To remove the mod**, run the setup again and click **UNINSTALL**.
-- Your saves and progress aren't touched. **Both players need the same HITMAN Co-op version.**
+Windows SmartScreen may show a warning because this community installer is unsigned. Confirm that you downloaded it from this repository. The Windows manual ZIP is intended for experienced users, not a substitute for the setup program.
+
+## Install on Steam Deck or Linux (Proton)
+
+**Tested on Ubuntu 24.04.5 with AMD graphics, Steam and Proton Experimental; physical Steam Deck hardware remains untested.**
+
+1. Install **HITMAN World of Assassination (Steam App ID 1659040)**. In Steam, open HITMAN **Properties → Compatibility → Force a specific compatibility tool → Proton Experimental**.
+2. Start unmodded HITMAN once and confirm that it loads, then **close the game**.
+3. From the [same R2.18.1 release](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.18.1-npc-disguise-safety-20261031), download **`HitmanCoop-Artur-R2.18.1-SteamDeck-Linux-Proton.zip`** (not the Windows EXE). Extract the ZIP into a permanent folder such as `~/Downloads/ArturEdition`.
+4. In **Steam Deck Desktop Mode**, open a terminal in the extracted folder. On Ubuntu GNOME, install the graphical dialog tool first using `sudo apt install -y zenity unzip`. KDE-based Steam Deck Desktop Mode normally has `kdialog`.
+5. Run the **Mission Control** installer:
+
+   ```bash
+   bash steamdeck/ui-install.sh --gui
+   ```
+
+6. In Mission Control choose **Status** to confirm HITMAN is detected, then **Install**, then **Verify**. If automatic discovery fails, choose the Steam HITMAN game folder manually. **Do not point it at a Windows installation.**
+7. Open HITMAN **through your normal Steam Library entry** with Proton Experimental. Press **`~`** to open the SDK and find the **CO-OP** interface. Use the same game/mod version on your Windows multiplayer partner.
+8. If ZHMModSDK does **not** load, try this under **Steam → HITMAN → Properties → General → Launch Options**, saving any existing option first:
+
+   ```text
+   WINEDLLOVERRIDES="dinput8.dll=n,b;zhmmodsdk.dll=n,b" %command%
+   ```
+
+9. Optional: run `bash steamdeck/install-shortcut.sh` once to add a **Mission Control** launcher to your Linux app menu, keeping the extracted folder in place. If graphical dialogs are unavailable, use `bash steamdeck/ui-install.sh --terminal`.
+
+**Launching later:** Start HITMAN normally in Steam; Mission Control is for managing/installing/verifying Artur Edition. The `Launch` button in Mission Control also asks Steam to launch HITMAN. For Steam Deck, use Steam Input to map `~` to a back button and use a trackpad for the menu as needed; those control mappings have not yet been verified on physical Deck hardware.
+
+**Windows ↔ Linux test:** On November 1, 2026, a Windows player and an Ubuntu player successfully connected through Steam and played with Artur Edition R2.18.1 / protocol 16. Steam Deck-specific behavior/performance still needs testing. Existing multiplayer synchronization limitations may affect both platforms.
+
+See the [full Steam Deck / Linux guide](docs/steamdeck-installation.md) for verification, repair, backups, uninstall, and troubleshooting.
 
 ## Play together
 

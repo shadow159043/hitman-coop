@@ -1,0 +1,79 @@
+# Attach the full offline Steam Deck/Linux Proton package to a GitHub Release
+# alongside, not instead of, the exact matching Windows setup and ZIP.
+# Each new release must have a matching entry in steamdeck/release-versions.json.
+name: Attach Linux Proton package to Windows release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing GitHub Release tag to attach Linux package to"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  attach-linux:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - name: Check out pinned release packaging scripts
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify release manifest and Windows assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.event.release.tag_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $manifest = Get-Content -Raw steamdeck/release-versions.json | ConvertFrom-Json -AsHashtable
+          if (-not $manifest.ContainsKey($env:RELEASE_TAG)) {
+            throw "No matching entry for $env:RELEASE_TAG in steamdeck/release-versions.json. Add exact release metadata before publishing."
+          }
+          $entry = $manifest[$env:RELEASE_TAG]
+          $assets = @(gh release view $env:RELEASE_TAG --repo $env:REPO --json assets --jq '.assets[].name')
+          if ($LASTEXITCODE -ne 0) { throw "Could not read release $env:RELEASE_TAG" }
+          if ($assets -notcontains $entry.windows_zip_asset) { throw "Missing Windows ZIP: $($entry.windows_zip_asset)" }
+          if ($assets -notcontains $entry.windows_setup_asset) { throw "Missing Windows setup: $($entry.windows_setup_asset)" }
+          New-Item -ItemType Directory -Force windows-source,release-output | Out-Null
+          gh release download $env:RELEASE_TAG --repo $env:REPO --pattern $entry.windows_zip_asset --dir windows-source
+          if ($LASTEXITCODE -ne 0) { throw "Could not retrieve matching Windows ZIP" }
+          "ARTUR_RELEASE_VERSION=$($entry.release_version)" >> $env:GITHUB_ENV
+          "ARTUR_MOD_VERSION=$($entry.mod_version)" >> $env:GITHUB_ENV
+          "ARTUR_SDK_VERSION=$($entry.sdk_version)" >> $env:GITHUB_ENV
+          "ARTUR_PROTOCOL=$($entry.protocol)" >> $env:GITHUB_ENV
+          "ARTUR_WINDOWS_ZIP=$($entry.windows_zip_asset)" >> $env:GITHUB_ENV
+
+      - name: Package offline Linux Proton installer using exact Windows DLLs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./steamdeck/package-deck.ps1 -WindowsZip (Join-Path windows-source $env:ARTUR_WINDOWS_ZIP) `
+            -OutputDirectory release-output -ReleaseVersion $env:ARTUR_RELEASE_VERSION `
+            -ModVersion $env:ARTUR_MOD_VERSION -SDKVersion $env:ARTUR_SDK_VERSION `
+            -Protocol ([int]$env:ARTUR_PROTOCOL)
+          if (-not (Test-Path "release-output/HitmanCoop-Artur-$env:ARTUR_RELEASE_VERSION-SteamDeck-Linux-Proton.zip.sha256")) {
+            throw "Linux Proton SHA256 file missing"
+          }
+
+      - name: Upload distinct Linux ZIP and checksum alongside Windows assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.event.release.tag_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release upload $env:RELEASE_TAG --repo $env:REPO --clobber `
+            "release-output/HitmanCoop-Artur-$env:ARTUR_RELEASE_VERSION-SteamDeck-Linux-Proton.zip" `
+            "release-output/HitmanCoop-Artur-$env:ARTUR_RELEASE_VERSION-SteamDeck-Linux-Proton.zip.sha256"
+          if ($LASTEXITCODE -ne 0) { throw "GitHub release upload failed" }
+          gh release view $env:RELEASE_TAG --repo $env:REPO --json assets --jq '.assets[].name'

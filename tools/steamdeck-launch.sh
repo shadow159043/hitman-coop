@@ -1,123 +1,111 @@
-#!/usr/bin/env bash
-set -euo pipefail
+# HITMAN Co-op — Artur Edition Steam Deck / Proton installation guide
 
-# Steam Deck / Proton launcher for HITMAN Co-op.
-# This does not port the Windows mod to native Linux; instead it launches the
-# existing Windows HITMAN install with Proton and adds the dinput8 override that
-# the project explicitly documents for Steam Deck / Linux compatibility.
-#
-# Usage:
-#   ./tools/steamdeck-launch.sh
-#   ./tools/steamdeck-launch.sh --game /path/to/HITMAN3.exe
-#   ./tools/steamdeck-launch.sh --proton /path/to/proton
-#
-# Notes:
-#   - The script expects the normal Windows HITMAN installation and the same mod
-#     files already installed by the Windows setup.
-#   - It keeps the original Windows mod install path intact and just wraps the
-#     game launch in Proton with the required override.
+This document describes the separate Steam Deck compatibility package for the existing Windows Artur Edition multiplayer mod.
 
-GAME_PATH=""
-PROTON_PATH=""
+## What this package is
 
-usage() {
-  echo "Usage: $0 [--game /path/to/HITMAN3.exe] [--proton /path/to/proton]" >&2
-  exit 1
-}
+This is not a native Linux port. It is a Steam Deck compatibility wrapper that installs the existing Windows Artur Edition files into the installed HITMAN World of Assassination directory and launches the game through Steam using Proton.
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --game)
-      [[ $# -ge 2 ]] || usage
-      GAME_PATH="$2"
-      shift 2
-      ;;
-    --proton)
-      [[ $# -ge 2 ]] || usage
-      PROTON_PATH="$2"
-      shift 2
-      ;;
-    -h|--help)
-      usage
-      ;;
-    *)
-      echo "Unknown argument: $1" >&2
-      usage
-      ;;
-  esac
-done
+It intentionally preserves the existing Windows multiplayer system and protocol compatibility, rather than creating a separate multiplayer engine.
 
-if [[ -z "$PROTON_PATH" ]]; then
-  CANDIDATES=(
-    "$HOME/.steam/steam/steamapps/common/Proton - Experimental/proton"
-    "$HOME/.steam/steam/steamapps/common/Proton 9/proton"
-    "$HOME/.local/share/Steam/steamapps/common/Proton - Experimental/proton"
-    "$HOME/.local/share/Steam/steamapps/common/Proton 9/proton"
-    "/usr/bin/steam"
-  )
+## Important limits
 
-  for candidate in "${CANDIDATES[@]}"; do
-    if [[ -n "$candidate" && -x "$candidate" ]]; then
-      PROTON_PATH="$candidate"
-      break
-    fi
-  done
-fi
+This package is experimental and still requires real Steam Deck testing.
 
-if [[ -z "$GAME_PATH" ]]; then
-  CANDIDATES=(
-    "$HOME/.steam/steam/steamapps/common/HITMAN 3/HITMAN3.exe"
-    "$HOME/.steam/steam/steamapps/common/HITMAN World of Assassination/HITMAN3.exe"
-    "$HOME/.steam/steam/steamapps/common/HITMAN 3/Retail/HITMAN3.exe"
-    "$HOME/.steam/steam/steamapps/common/HITMAN World of Assassination/Retail/HITMAN3.exe"
-    "$HOME/.local/share/Steam/steamapps/common/HITMAN 3/HITMAN3.exe"
-    "$HOME/.local/share/Steam/steamapps/common/HITMAN World of Assassination/HITMAN3.exe"
-    "$HOME/.local/share/Steam/steamapps/common/HITMAN 3/Retail/HITMAN3.exe"
-    "$HOME/.local/share/Steam/steamapps/common/HITMAN World of Assassination/Retail/HITMAN3.exe"
-  )
+- The Windows Artur Edition runtime remains the authoritative implementation.
+- Steam friend invitations and P2P behaviour depend on Steam + Proton compatibility.
+- The package does not claim validated multiplayer gameplay unless tested on real hardware.
 
-  for candidate in "${CANDIDATES[@]}"; do
-    if [[ -f "$candidate" ]]; then
-      GAME_PATH="$candidate"
-      break
-    fi
-  done
-fi
+## Required versions
 
-if [[ -z "$GAME_PATH" ]]; then
-  echo "Could not find a HITMAN game installation automatically." >&2
-  echo "Set --game to the HITMAN3.exe path manually." >&2
-  exit 2
-fi
+- HITMAN World of Assassination
+- Steam App ID: `1659040`
+- Required game version: `3.290.1.0`
+- Required SDK: `ZHMModSDK 4.2.1`
+- Multiplayer protocol: `16`
 
-if [[ -z "$PROTON_PATH" ]]; then
-  echo "Could not find Proton automatically." >&2
-  echo "Set --proton to the Proton executable manually." >&2
-  exit 3
-fi
+## Install in Desktop Mode
 
-# `steam-run` is the easiest path on Steam Deck if available.
-# Fall back to the proton executable directly.
-if [[ -x "/usr/bin/steam-run" ]]; then
-  echo "Launching HITMAN Co-op via Steam Deck Proton compatibility layer..."
-  env WINEDLLOVERRIDES="dinput8=n,b" PROTON_NO_ESYNC=1 /usr/bin/steam-run "$GAME_PATH"
-  exit $?
-fi
+1. Copy the `steamdeck/` directory to a place you can access from Steam Deck Desktop Mode.
+2. Open a terminal in Desktop Mode.
+3. Detect the game automatically:
 
-if [[ "$PROTON_PATH" == "/usr/bin/steam" ]]; then
-  echo "Steam binary found, but no Proton runtime was detected in the usual locations." >&2
-  echo "Please pass --proton to the Proton executable, or install Proton compatibility tools." >&2
-  exit 4
-fi
+```bash
+bash steamdeck/install.sh
+```
 
-# Proton expects the game executable path inside the Windows prefix, not a host
-# Linux path. The normal Steam Deck flow is to launch the game through Steam,
-# while this wrapper is primarily for manual runs.
-#
-# If the Proton binary is present, we still call it directly to keep the exact
-# same Windows install path and use the same dinput8 override documented by the
-# project.
+4. If the game is not found automatically, pass the path explicitly:
 
-echo "Launching HITMAN Co-op with Proton wrapper..."
-  env WINEDLLOVERRIDES="dinput8=n,b" PROTON_NO_ESYNC=1 "$PROTON_PATH" run "$GAME_PATH"
+```bash
+bash steamdeck/install.sh --game "/path/to/HITMAN World of Assassination"
+```
+
+5. If you have the extracted Artur Edition bundle available locally, pass it explicitly:
+
+```bash
+bash steamdeck/install.sh --game "/path/to/HITMAN World of Assassination" --package "/path/to/Artur-Release"
+```
+
+## Launch through Steam
+
+```bash
+bash steamdeck/launch.sh
+```
+
+The launcher prefers the official Steam entry point and uses App ID `1659040`.
+
+## Verify installation
+
+```bash
+bash steamdeck/verify.sh --game "/path/to/HITMAN World of Assassination"
+```
+
+## Repair or restore
+
+```bash
+bash steamdeck/restore.sh --game "/path/to/HITMAN World of Assassination"
+```
+
+```bash
+bash steamdeck/uninstall.sh --game "/path/to/HITMAN World of Assassination"
+```
+
+## Common troubleshooting
+
+### Game not detected
+
+- Ensure HITMAN is installed through Steam.
+- Check the Steam library and custom library locations.
+- Pass `--game` explicitly.
+
+### Artur Edition files not detected
+
+- Ensure the package contains the expected nested `Retail` layout.
+- Use the extracted release folder rather than a random ZIP root directory.
+- Confirm the package contains at least the required Artur files.
+
+### Steam launcher does not start the game
+
+- Check that the App ID is `1659040`.
+- Verify Steam is installed and working in Desktop Mode.
+- Use the direct Proton fallback only for troubleshooting:
+
+```bash
+bash steamdeck/launch.sh --force-direct
+```
+
+## Compatibility and risk caveat
+
+This entire package is an experimental wrapper around the Windows Artur Edition installation. It does not guarantee a fully validated Steam Deck gameplay experience and should be treated as an early compatibility distribution.
+
+## Files installed and backed up
+
+The package only backs up the files it is expected to replace, such as:
+
+- `Retail/dinput8.dll`
+- `Retail/ZHMModSDK.dll`
+- `Retail/mods.ini`
+- `Retail/mods/HitmanCoop.dll`
+
+Backups are stored in a dedicated state directory outside the game install, not inside the `Retail` folder.
 

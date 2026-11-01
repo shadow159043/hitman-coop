@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=HITMAN Co-op - Artur Edition (Steam Deck)
+Comment=Experimental wrapper: launch HITMAN via Steam
+Exec=steam steam://rungameid/1659040
+Icon=applications-games
+Terminal=false
+Categories=Game;
