@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+# This is a desktop launcher file for the Steam Deck package.
+# It requires the user to install the package via the Desktop Mode shell, then run
+# the script from the same directory.
+
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=HITMAN Co-op — Artur Edition (Steam Deck)
+Comment=Experimental Proton launcher for HITMAN Co-op Artur Edition
+Exec=/bin/bash -lc '/home/deck/HITMAN-Coop/steamdeck/launch.sh'
+Icon=applications-games
+Terminal=true
+Categories=Game;
+StartupNotify=true
+
