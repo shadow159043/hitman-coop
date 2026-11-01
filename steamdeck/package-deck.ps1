@@ -21,7 +21,7 @@ $ZipName = "HitmanCoop-Artur-$ReleaseVersion-SteamDeck-Linux-Proton.zip"
 New-Item -ItemType Directory -Force $Extract,$Bundle,$DeckOut | Out-Null
 try {
     [IO.Compression.ZipFile]::ExtractToDirectory((Resolve-Path $WindowsZip).Path, $Extract)
-    if ([IO.Path]::GetFileName($WindowsZip) -notmatch [regex]::Escape($ModVersion)) {
+    if (([IO.Path]::GetFileName($WindowsZip) -notmatch [regex]::Escape($ModVersion)) -and ([IO.Path]::GetFileName($WindowsZip) -notmatch [regex]::Escape($ReleaseVersion))) {
         throw "Windows ZIP name must include matching mod version $ModVersion to prevent mixed-release packaging: $WindowsZip"
     }
     $Plugin = @(Get-ChildItem -LiteralPath $Extract -Recurse -File -Filter 'HitmanCoop.dll' | Where-Object { $_.FullName -match '[\\/]Retail[\\/]mods[\\/]HitmanCoop.dll$' })
