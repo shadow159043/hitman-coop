@@ -10,9 +10,9 @@ cat > "$dest" <<EOF
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=HITMAN Co-op — Artur Edition (Steam Deck)
+Name=HITMAN Co-op - Artur Edition (Steam Deck)
 Comment=Experimental Steam Deck/Proton installer and launcher
-Exec=/usr/bin/env bash "$escaped/ui-install.sh"
+Exec=/usr/bin/env bash "$escaped/ui-install.sh" --gui
 Icon=applications-games
 Terminal=false
 Categories=Game;Utility;

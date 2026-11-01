@@ -9,8 +9,12 @@ Install HITMAN World of Assassination through Steam, confirm it starts without m
 Extract the experimental Steam Deck ZIP into Downloads. Open the extracted folder in a terminal and run:
 
 ```bash
-bash steamdeck/ui-install.sh
+bash steamdeck/ui-install.sh --gui
 ```
+
+Steam Deck Desktop Mode uses KDE's built-in `kdialog`. Ubuntu/GNOME users should install Zenity with `sudo apt install -y zenity` before launching the graphical interface. It provides a clickable menu for **Install, Verify, Launch, Repair, Restore, Uninstall, Status, Help** and requires confirmation for modifications. If no dialog provider is available, run `bash steamdeck/ui-install.sh --terminal`. To add a graphical app-menu shortcut after extracting the ZIP, run `bash steamdeck/install-shortcut.sh`; keep the extracted package in that location.
+
+The GUI opens safely without modifying HITMAN. It will offer manual folder selection if Steam library discovery fails; selecting a folder alone does not install anything. The launch button requests the official Steam game and does not prove that Proton or multiplayer works.
 
 Alternatively:
 

@@ -8,10 +8,13 @@ This is a **separate Steam Deck installer and launcher**, not a native Linux por
 
 1. Close HITMAN. Ensure HITMAN World of Assassination is installed through Steam and select **Proton Experimental** in its Steam Properties > Compatibility.
 2. Extract this Steam Deck ZIP to a writable folder (for example Downloads).
-3. Open a terminal in the extracted folder and run `bash steamdeck/ui-install.sh` for a menu, or run `bash steamdeck/install.sh` to install the included Windows mod payload.
-4. If this is an **installer-only** package without the payload, supply the original Windows R2.18.1 ZIP: `bash steamdeck/install.sh --package "/path/to/HitmanCoop-0.12.21-....zip"`.
-5. To confirm the file layout and checksums, run `bash steamdeck/verify.sh`.
-6. Launch HITMAN **from the normal Steam game entry** (or run `bash steamdeck/launch.sh`). Open the CO-OP menu as usual.
+3. For a clickable **graphical Mission Control**, run `bash steamdeck/ui-install.sh --gui`. Steam Deck's KDE uses `kdialog`; on Ubuntu GNOME, install Zenity first with `sudo apt install -y zenity`. The interface automatically chooses a supported dialog toolkit. Use `bash steamdeck/ui-install.sh --terminal` if you prefer the text menu.
+4. The graphical menu provides **Install, Verify, Launch, Repair, Restore, Uninstall, Status, and Help**. It displays the detected game folder and whether the mod is installed. Nothing is installed merely by opening the menu.
+5. Optionally run `bash steamdeck/install-shortcut.sh` to add a **Mission Control launcher** to the Linux application menu. Keep the extracted package in its original location afterward.
+6. To install directly without the GUI, run `bash steamdeck/install.sh` with the bundled Windows runtime.
+7. If this is an **installer-only** package without the payload, supply the original Windows R2.18.1 ZIP: `bash steamdeck/install.sh --package "/path/to/HitmanCoop-0.12.21-....zip"`.
+8. Confirm the installed files and checksums with `bash steamdeck/verify.sh`.
+9. Launch HITMAN **from the normal Steam game entry** (or run `bash steamdeck/launch.sh`). Open the CO-OP menu as usual.
 
 The scripts detect Steam libraries through `libraryfolders.vdf` and `appmanifest_1659040.acf`. To choose the game manually, use `--game "/path/to/HITMAN World of Assassination"` (the `Retail` folder also works).
 
