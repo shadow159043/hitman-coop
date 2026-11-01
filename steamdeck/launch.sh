@@ -1,24 +1,17 @@
 #!/usr/bin/env bash
-set -uo pipefail
-
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
-
-STEAMDECK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-readonly HITMAN_COOP_STEAM_APP_ID="1659040"
-readonly HITMAN_COOP_FORCE_LAUNCH_OPTION="WINEDLLOVERRIDES='dinput8.dll=n,b;zhmmodsdk.dll=n,b'"
-
-usage() {
-  cat <<'EOF'
-HITMAN Co-op — Artur Edition Steam Deck / Proton compatibility launcher
-
-Usage:
-  ./launch.sh [--game PATH] [--steam PATH] [--proton PATH] [--force-direct]
-
-Notes:
-  - This package is a compatibility wrapper around the existing Windows Artur Edition.
-  - It prefers launching through Steam to preserve Steam authentication, overlays, and friend invitations.
-  - Real Steam Deck gameplay compatibility still requires hardware testing.
-EOF
-}
-
+set -euo pipefail
+DECK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+source "$DECK_ROOT/lib/common.sh"
+steam_cmd="${STEAM_BIN:-}"
+while (($#)); do
+  case "$1" in --steam) (($#>=2)) || die "--steam needs an executable"; steam_cmd="$2"; shift 2;;
+    --help|-h) echo "Usage: bash launch.sh [--steam STEAM_EXECUTABLE]"; exit 0;;
+    *) die "Unknown option: $1";;
+  esac
+done
+[[ -n "$steam_cmd" ]] || steam_cmd="$(command -v steam || true)"
+[[ -n "$steam_cmd" ]] || die "Steam not found. Launch HITMAN from Steam Desktop Mode instead."
+if [[ "$steam_cmd" == */* ]]; then [[ -x "$steam_cmd" ]] || die "Steam executable is not available: $steam_cmd"; fi
+log "Launching officially installed HITMAN through Steam App ID $APP_ID"
+log 'If using an older Proton, consult the ZHMModSDK Deck instructions for DLL overrides.'
+exec "$steam_cmd" "steam://rungameid/$APP_ID"

@@ -1,83 +1,41 @@
 #!/usr/bin/env bash
-set -uo pipefail
-
-# Compatibility wrapper for the Windows Artur Edition under Proton on Steam Deck.
-# This is intentionally separate from the Windows install flow.
-
-readonly HITMAN_COOP_APP_ID="1659040"
-readonly HITMAN_COOP_PROTON_STATIC_OVERRIDE='WINEDLLOVERRIDES="dinput8=n,b;zhmmodsdk=n,b"'
-
-usage() {
-  cat <<'EOF'
-Steam Deck / Proton launcher wrapper for HITMAN Co-op Artur Edition.
-
-Usage:
-  ./tools/steamdeck-launch.sh [--game PATH] [--proton PATH]
-
-Uses the correct Steam App ID: 1659040.
-EOF
-}
-
-FORCED_GAME=""
-FORCED_PROTON=""
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --game)
-      [[ $# -ge 2 ]] || { echo "--game requires a path" >&2; exit 2; }
-      FORCED_GAME="$2"
-      shift 2
-      ;;
-    --proton)
-      [[ $# -ge 2 ]] || { echo "--proton requires a path" >&2; exit 2; }
-      FORCED_PROTON="$2"
-      shift 2
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    *)
-      echo "Unknown argument: $1" >&2
-      usage
-      exit 2
-      ;;
-  esac
+set -euo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+export HOME="$tmp/home" XDG_STATE_HOME="$tmp/state"
+game="$tmp/Game With Spaces"
+retail="$game/Retail"
+pkg="$tmp/Artur Windows R2.18.1/Retail"
+mkdir -p "$retail/mods" "$pkg/mods" "$HOME"
+printf 'fake-hitman' > "$retail/HITMAN3.exe"
+for name in dinput8.dll ZHMModSDK.dll crashpad_handler.exe discord_game_sdk.dll ResourceLib_HM3.dll; do
+  printf 'mod-%s' "$name" > "$pkg/$name"
 done
-
-if [[ -n "$FORCED_PROTON" ]]; then
-  if [[ -x "$FORCED_PROTON" ]]; then
-    PROTON_BIN="$FORCED_PROTON"
-  else
-    echo "Proton binary was supplied but is not executable: $FORCED_PROTON" >&2
-    exit 3
-  fi
-else
-  PROTON_BIN="$(command -v proton || true)"
-  if [[ -z "$PROTON_BIN" ]]; then
-    PROTON_BIN="$(command -v protontricks || true)"
-  fi
+printf 'mod-coop' > "$pkg/mods/HitmanCoop.dll"
+printf 'previous sdk' > "$retail/ZHMModSDK.dll"
+printf '[OtherMod]\nsetting=true\n' > "$retail/mods.ini"
+if bash "$root/verify.sh" --game "$game" >/dev/null 2>&1; then echo "Unmodified HITMAN unexpectedly verified"; exit 1; fi
+bash "$root/install.sh" --game "$game" --package "$tmp/Artur Windows R2.18.1"
+bash "$root/verify.sh"
+[[ "$(cat "$retail/ZHMModSDK.dll")" == 'mod-ZHMModSDK.dll' ]]
+grep -Fq '[OtherMod]' "$retail/mods.ini"
+grep -Fq '[HitmanCoop]' "$retail/mods.ini"
+[[ ! -d "$retail/HitmanCoop-Backup" ]] || exit 1
+[[ -f "$XDG_STATE_HOME/hitman-coop-artur-deck/manifest.tsv" ]]
+bash "$root/install.sh" --game "$game" --package "$tmp/Artur Windows R2.18.1"
+rm -f "$retail/mods/HitmanCoop.dll"
+bash "$root/repair.sh" --game "$game" --package "$tmp/Artur Windows R2.18.1"
+bash "$root/verify.sh"
+bash "$root/uninstall.sh"
+[[ "$(cat "$retail/ZHMModSDK.dll")" == 'previous sdk' ]]
+grep -Fq '[OtherMod]' "$retail/mods.ini"
+! grep -Fq '[HitmanCoop]' "$retail/mods.ini"
+[[ ! -e "$retail/mods/HitmanCoop.dll" ]]
+[[ ! -e "$retail/dinput8.dll" ]]
+# Enabled conflict must fail before backup or modifications.
+printf '[AssassinRivals2]\n' >> "$retail/mods.ini"
+if bash "$root/install.sh" --game "$game" --package "$tmp/Artur Windows R2.18.1" >/dev/null 2>&1; then
+  echo "Enabled conflicting mod was incorrectly accepted"; exit 1
 fi
-
-if [[ -n "$FORCED_GAME" ]]; then
-  GAME_PATH="$FORCED_GAME"
-elif [[ -f "$HOME/.steam/steam/steamapps/common/HITMAN World of Assassination/Retail/HITMAN3.exe" ]]; then
-  GAME_PATH="$HOME/.steam/steam/steamapps/common/HITMAN World of Assassination/Retail/HITMAN3.exe"
-else
-  GAME_PATH=""
-fi
-
-if [[ -x "$(command -v steam || true)" ]]; then
-  echo "Launching HITMAN through Steam App ID ${HITMAN_COOP_APP_ID}"
-  exec "$(command -v steam)" "steam://rungameid/${HITMAN_COOP_APP_ID}"
-fi
-
-if [[ -n "$PROTON_BIN" && -n "$GAME_PATH" ]]; then
-  echo "Steam was unavailable; falling back to Proton direct launch for troubleshooting."
-  export WINEDLLOVERRIDES="dinput8=n,b;zhmmodsdk=n,b"
-  exec "$PROTON_BIN" run "$GAME_PATH"
-fi
-
-echo "Neither Steam nor Proton was found. The Steam Deck package cannot launch HITMAN." >&2
-exit 4
-
+echo "PASS: install, checksums, repeat, repair, rollback, unrelated config, conflict guard."

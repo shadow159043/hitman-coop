@@ -1,48 +1,36 @@
 #!/usr/bin/env bash
-set -uo pipefail
-
-STEAMDECK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$STEAMDECK_ROOT/lib/common.sh"
-
-usage() {
-  cat <<'EOF'
-HITMAN Co-op — Artur Edition Steam Deck verification
-
-Usage:
-  ./verify.sh [--game PATH] [--package PATH]
-
-Verifies that the required Artur Edition files exist in the target HITMAN installation.
-EOF
-}
-
-FORCED_GAME=""
-FORCED_PACKAGE=""
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --game)
-      [[ $# -ge 2 ]] || die "--game requires a path."
-      FORCED_GAME="$2"
-      shift 2
-      ;;
-    --package)
-      [[ $# -ge 2 ]] || die "--package requires a path."
-      FORCED_PACKAGE="$2"
-      shift 2
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    *)
-      warn "Unknown argument: $1"
-      usage
-      exit 2
-      ;;
+set -euo pipefail
+DECK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+source "$DECK_ROOT/lib/common.sh"
+game=""
+while (($#)); do
+  case "$1" in --game) (($#>=2)) || die "--game needs a path"; game="$2"; shift 2;;
+    --help|-h) echo "Usage: bash uninstall.sh [--game PATH]"; exit 0;;
+    *) die "Unknown option: $1";;
   esac
 done
-
-GAME_ROOT="$(resolve_game_root "$FORCED_GAME")" || die "Unable to locate a HITMAN installation."
-PACKAGE_ROOT="$(resolve_package_root "$FORCED_PACKAGE")" || warn "No package bundle was supplied; continuing with game-only checks."
-verify_installation "$GAME_ROOT" "$PACKAGE_ROOT"
-exit $?
-
+[[ -f "$MANIFEST" ]] || die "No tracked installation to uninstall."
+retail="$(game_forced_or_auto "$game")" || die "HITMAN not found."
+[[ "$retail" == "$(saved_game)" ]] || die "Manifest belongs to another installation."
+backup="$(sed -n '1s/^BACKUP\t//p' "$MANIFEST")"
+[[ -d "$backup" ]] || die "Original-file backup is missing: $backup"
+# Check every file before touching any files; never overwrite user modifications.
+while IFS=$'\t' read -r rel expected origin; do
+  [[ "$rel" == BACKUP ]] && continue
+  if [[ -f "$retail/$rel" && "$(hash_file "$retail/$rel")" != "$expected" ]]; then
+    die "Refusing to remove a file changed after installation: $rel"
+  fi
+  if [[ "$origin" == 1 && ! -f "$backup/$rel" ]]; then die "Cannot restore missing backup: $rel"; fi
+done < "$MANIFEST"
+while IFS=$'\t' read -r rel expected origin; do
+  [[ "$rel" == BACKUP ]] && continue
+  if [[ "$origin" == 1 ]]; then
+    mkdir -p "$retail/$(dirname "$rel")"
+    cp -p "$backup/$rel" "$retail/$rel"
+  else
+    rm -f "$retail/$rel"
+  fi
+done < "$MANIFEST"
+rm -f "$MANIFEST" "$GAME_PATH_FILE"
+log "SUCCESS: Artur Edition removed; original files restored."
+log "Backup retained at $backup for safety."
