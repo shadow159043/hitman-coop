@@ -102,7 +102,7 @@ prepare_package() {
   elif [[ "$source" == *.zip ]]; then
     command -v python3 >/dev/null || die "Python 3 is required to import a Windows release ZIP."
     mkdir -p "$tmp/extracted"
-    python3 "$DECK_ROOT/lib/extract_release.py" "$source" "$tmp/extracted" || return 1
+    python3 "$DECK_ROOT/lib/extract_release.py" "$source" "$tmp/extracted" >&2 || return 1
     payload_retail "$tmp/extracted"
   else die "Expected an extracted release directory or a .zip package."; fi
 }
