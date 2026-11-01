@@ -21,7 +21,7 @@ fi
 if [[ -f "$MANIFEST" ]]; then
   if (( !repair )); then
     log "Artur Edition installation is already tracked; use verify.sh or repair.sh."
-    "$DECK_ROOT/verify.sh" --game "$retail"
+    bash "$DECK_ROOT/verify.sh" --game "$retail"
     exit $?
   fi
   [[ "$(saved_game)" == "$retail" ]] || die "Refusing repair of a different game folder."
@@ -119,4 +119,4 @@ record_game "$retail"
 trap - ERR
 log "SUCCESS: Artur Edition R2.18.1 installed to $retail"
 log "Original files backed up outside the game under $backup"
-"$DECK_ROOT/verify.sh" --game "$retail"
+bash "$DECK_ROOT/verify.sh" --game "$retail"
