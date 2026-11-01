@@ -1,12 +1,18 @@
-# Artur Edition Steam Deck installer and testing
+# Artur Edition Steam Deck / Linux (Proton) installation
+
+**Release download:** [R2.18.1 — Windows and Steam Deck/Linux packages](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.18.1-npc-disguise-safety-20261031). Choose **`HitmanCoop-Artur-R2.18.1-SteamDeck-Linux-Proton.zip`** for Linux; Windows players choose **`HitmanCoop-Artur-R2.18.1-Windows-Setup.exe`**.
 
 **Distribution:** Steam Deck / Proton experimental compatibility installer for Windows Artur Edition **R2.18.1 (v0.12.21)**. This package deliberately shares the Windows mod DLL and protocol 16; it is **not** a Linux-native rewrite.
+
+## Verified compatibility (November 1, 2026)
+
+On a physical PC booted directly into **Ubuntu 24.04.5 LTS** from an external Samsung T9 SSD, the AMD RADV Vulkan driver and Steam **Proton Experimental** ran HITMAN World of Assassination. The user tested Artur Edition **R2.18.1** installation and verification through Mission Control, confirmed ZHMModSDK and Co-op loaded, and successfully played **Windows ↔ Ubuntu multiplayer using Steam invitations**. This is a user-reported live test, **not** a measured performance benchmark or a physical Steam Deck test. Steam Deck controllers, UI and device-specific compatibility remain unverified.
 
 ## Installing
 
 Install HITMAN World of Assassination through Steam, confirm it starts without mods, close the game, and switch to Steam Deck Desktop Mode. In Steam Properties > Compatibility select **Proton Experimental**.
 
-Extract the experimental Steam Deck ZIP into Downloads. Open the extracted folder in a terminal and run:
+Download **`HitmanCoop-Artur-R2.18.1-SteamDeck-Linux-Proton.zip`** from the [R2.18.1 release](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.18.1-npc-disguise-safety-20261031). Extract it into a folder you intend to keep (such as `~/Downloads/ArturEdition`). Open the extracted folder in a terminal and run:
 
 ```bash
 bash steamdeck/ui-install.sh --gui
@@ -14,7 +20,7 @@ bash steamdeck/ui-install.sh --gui
 
 Steam Deck Desktop Mode uses KDE's built-in `kdialog`. Ubuntu/GNOME users should install Zenity with `sudo apt install -y zenity` before launching the graphical interface. It provides a clickable menu for **Install, Verify, Launch, Repair, Restore, Uninstall, Status, Help** and requires confirmation for modifications. If no dialog provider is available, run `bash steamdeck/ui-install.sh --terminal`. To add a graphical app-menu shortcut after extracting the ZIP, run `bash steamdeck/install-shortcut.sh`; keep the extracted package in that location.
 
-The GUI opens safely without modifying HITMAN. It will offer manual folder selection if Steam library discovery fails; selecting a folder alone does not install anything. The launch button requests the official Steam game and does not prove that Proton or multiplayer works.
+To launch the modded game on subsequent sessions, start **HITMAN from Steam normally using Proton Experimental**; the mod is installed inside the game's `Retail` folder. Mission Control is a separate installer/verification/repair tool, not an alternative game executable. For Steam Deck use **Desktop Mode** to run the installer. The GUI opens safely without modifying HITMAN. It will offer manual folder selection if Steam library discovery fails; selecting a folder alone does not install anything. The launch button requests the official Steam game and does not prove that Proton or multiplayer works.
 
 Alternatively:
 
@@ -81,6 +87,6 @@ GitHub Actions is a Linux runner, not SteamOS or actual Steam Deck hardware; pas
 
 ## Status and limitations
 
-Automated tests use simulated directories, not a real Linux Steam game. The project does not assert actual Steam Deck compatibility or performance until real hardware testing. R2.18.1 body dragging can still be inconsistent; optional friendly fire and player fistfights remain **experimental**.
+Automated regression tests use simulated directories. In addition, live Ubuntu/Proton gameplay and Windows ↔ Ubuntu multiplayer were verified by the user on November 1, 2026 (see above). **Steam Deck hardware has not yet been tested**; Steam Deck support remains experimental and is not a guarantee of performance or controller compatibility. R2.18.1 body dragging can still be inconsistent; optional friendly fire and player fistfights remain **experimental**.
 
 License and attribution: original HITMAN Co-op by Jordan Rodrigues, GPL-3.0-or-later; ZHMModSDK by OrfeasZ.
