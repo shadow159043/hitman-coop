@@ -65,6 +65,16 @@ The installer keeps a file-specific backup and manifest under `~/.local/state/hi
 
 If installation fails, preserve any error text. Report which installation step failed without sharing IP addresses, room passwords, Steam account IDs or private logs.
 
+## Automated Linux checks on GitHub
+
+The separate `Steam Deck Linux CI` workflow in `.github/workflows/steamdeck-linux-ci.yml` runs on **Ubuntu 24.04 and 26.04** for updates to the Steam Deck package and PRs into `main`. It also supports manual runs from GitHub Actions.
+
+The checks include Bash syntax, ShellCheck errors, Python source compilation, desktop-entry validation, existing simulated installation/restore tests, and a Linux-only test of ZIP importing, checksum rejection, path traversal rejection, and malicious symlink rejection.
+
+After checks pass, CI provides an **installer-only** test ZIP artifact for inspection. It does **not** include the Windows DLLs; use the standalone offline ZIP made on the development machine or import the matching Windows release ZIP. No Steam credentials or installed game are required by CI.
+
+GitHub Actions is a Linux runner, not SteamOS or actual Steam Deck hardware; passing checks does not prove that the mod loads under Proton or that Steam invitations work.
+
 ## Status and limitations
 
 Automated tests use simulated directories, not a real Linux Steam game. The project does not assert actual Steam Deck compatibility or performance until real hardware testing. R2.18.1 body dragging can still be inconsistent; optional friendly fire and player fistfights remain **experimental**.

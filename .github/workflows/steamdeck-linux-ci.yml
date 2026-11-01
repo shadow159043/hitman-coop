@@ -1,0 +1,101 @@
+# Steam Deck installer testing only. No HITMAN binaries or Windows mod source are built here.
+# The only uploaded ZIP is explicitly installer-only; it excludes the Windows DLL payload.
+name: Steam Deck Linux CI
+
+on:
+  push:
+    branches:
+      - main
+      - feature/steamdeck-proton-installer
+    paths:
+      - 'steamdeck/**'
+      - 'docs/steamdeck-installation.md'
+      - '.github/workflows/steamdeck-linux-ci.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'steamdeck/**'
+      - 'docs/steamdeck-installation.md'
+      - '.github/workflows/steamdeck-linux-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  steamdeck-linux:
+    name: Installer tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - ubuntu-26.04
+    steps:
+      - name: Checkout source without persistent credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Linux validation utilities
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends shellcheck desktop-file-utils unzip zip
+
+      - name: Check Bash, Python and Desktop Entry syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' scripts < <(find steamdeck -type f -name '*.sh' -print0)
+          test "${#scripts[@]}" -gt 0
+          for script in "${scripts[@]}"; do bash -n "$script"; done
+          shellcheck --severity=error "${scripts[@]}"
+          python3 -m py_compile steamdeck/lib/extract_release.py
+          desktop-file-validate steamdeck/HITMAN-Coop-Artur-Deck.desktop
+          echo "PASS: Bash, ShellCheck errors, Python, .desktop validation."
+
+      - name: Run independent Steam Deck regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash steamdeck/tests/run-tests.sh
+
+      - name: Test ZIP import and malicious archives on Linux
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash steamdeck/tests/linux-zip-import.sh
+
+      - name: Validate an installer-only test archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-output
+          zip -q -r ci-output/HitmanCoop-Artur-SteamDeck-INSTALLER-ONLY.zip \
+            steamdeck docs/steamdeck-installation.md \
+            -x '*/__pycache__/*' '*.pyc' 'steamdeck/payload/*'
+          unzip -t ci-output/HitmanCoop-Artur-SteamDeck-INSTALLER-ONLY.zip | tail -n 1
+          unzip -Z1 ci-output/HitmanCoop-Artur-SteamDeck-INSTALLER-ONLY.zip | grep -Fx 'steamdeck/install.sh'
+          unzip -Z1 ci-output/HitmanCoop-Artur-SteamDeck-INSTALLER-ONLY.zip | grep -Fx 'steamdeck/tests/linux-zip-import.sh'
+          if unzip -Z1 ci-output/HitmanCoop-Artur-SteamDeck-INSTALLER-ONLY.zip | grep -q 'steamdeck/payload/Retail/'; then
+            echo 'FAIL: installer-only archive unexpectedly contains runtime files' >&2
+            exit 1
+          fi
+          (cd ci-output && sha256sum HitmanCoop-Artur-SteamDeck-INSTALLER-ONLY.zip > HitmanCoop-Artur-SteamDeck-INSTALLER-ONLY.zip.sha256)
+          echo 'PASS: installer-only archive can be opened and has no private runtime payload.'
+
+      - name: Attach installer-only artifact for inspection
+        if: matrix.os == 'ubuntu-24.04'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Artur-SteamDeck-Installer-Only-CI
+          path: |
+            ci-output/HitmanCoop-Artur-SteamDeck-INSTALLER-ONLY.zip
+            ci-output/HitmanCoop-Artur-SteamDeck-INSTALLER-ONLY.zip.sha256
+          if-no-files-found: error
+          retention-days: 7
