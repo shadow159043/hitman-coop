@@ -104,4 +104,4 @@ jobs:
           set -euo pipefail
           zip_hash="$(cut -d' ' -f1 downloaded/$LINUX_ZIP.sha256)"
           app_hash="$(cut -d' ' -f1 output/$APPIMAGE.sha256)"
-          gh pr comment 4 --repo "$REPO" --body "Published **R2.18.1 Linux `mods.ini` safety fix**. ZIP SHA256: \`$zip_hash\`; AppImage SHA256: \`$app_hash\`. Both installers were rebuilt from the Windows-matched release, the AppImage passed the Ubuntu launch test, and both outputs were uploaded to the latest release. Workflow run: https://github.com/$REPO/actions/runs/$GITHUB_RUN_ID"
+          gh pr comment 4 --repo "$REPO" --body "Published R2.18.1 Linux mods.ini safety fix. ZIP SHA256: \`$zip_hash\`; AppImage SHA256: \`$app_hash\`. Both installers were rebuilt from the Windows-matched release, the AppImage passed the Ubuntu launch test, and both outputs were uploaded to the latest release. Workflow run: https://github.com/$REPO/actions/runs/$GITHUB_RUN_ID"
