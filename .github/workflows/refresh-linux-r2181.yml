@@ -1,0 +1,100 @@
+# One-time sequential repackaging of Artur R2.18.1 after installer regression fix.
+# Both outputs reuse original Windows release assets; no game binaries are rebuilt.
+name: Refresh R2.18.1 Linux ZIP and AppImage
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/refresh-linux-r2181.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_TAG: artur-r2.18.1-npc-disguise-safety-20261031
+  REPO: ${{ github.repository }}
+  GH_TOKEN: ${{ github.token }}
+  WIN_ZIP: HitmanCoop-Artur-R2.18.1-Windows-Mod.zip
+  LINUX_ZIP: HitmanCoop-Artur-R2.18.1-SteamDeck-Linux-Proton.zip
+  APPIMAGE: Artur-Edition-R2.18.1-SteamDeck-Linux-Installer-x86_64.AppImage
+
+jobs:
+  rebuild-zip:
+    name: Repackage verified offline ZIP without changing Windows release
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify expected release and matching Windows binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $data = Get-Content -Raw 'steamdeck/release-versions.json' | ConvertFrom-Json -AsHashtable
+          $entry = $data[$env:RELEASE_TAG]
+          if (!$entry -or $entry.release_version -ne 'R2.18.1' -or $entry.windows_zip_asset -ne $env:WIN_ZIP) {throw 'Unexpected release mapping'}
+          $names = @(gh release view $env:RELEASE_TAG --repo $env:REPO --json assets --jq '.assets[].name')
+          if ($LASTEXITCODE -ne 0 -or $names -notcontains $env:WIN_ZIP -or $names -notcontains $entry.windows_setup_asset) {throw 'Missing matching Windows assets'}
+          New-Item -ItemType Directory -Force 'windows-source','output' | Out-Null
+          gh release download $env:RELEASE_TAG --repo $env:REPO --pattern $env:WIN_ZIP --dir windows-source
+          if ($LASTEXITCODE -ne 0) {throw 'Windows release ZIP download failed'}
+      - name: Rebuild Linux ZIP with fixed Mission Control scripts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./steamdeck/package-deck.ps1 -WindowsZip (Join-Path windows-source $env:WIN_ZIP) -OutputDirectory output -ReleaseVersion 'R2.18.1' -ModVersion '0.12.21' -SDKVersion '4.2.1' -Protocol 16
+          if ($LASTEXITCODE -ne 0) {throw 'Linux ZIP packaging failed'}
+      - name: Publish replacement Linux ZIP and matching SHA256
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release upload $env:RELEASE_TAG --repo $env:REPO --clobber "output/$env:LINUX_ZIP" "output/$env:LINUX_ZIP.sha256"
+          if ($LASTEXITCODE -ne 0) {throw 'Linux ZIP publishing failed'}
+
+  rebuild-appimage:
+    name: Rebuild, smoke-test and publish standalone AppImage from refreshed ZIP
+    needs: rebuild-zip
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install validation requirements
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends desktop-file-utils shellcheck unzip curl file
+          bash -n steamdeck/appimage/AppRun steamdeck/appimage/build.sh
+          shellcheck --severity=error steamdeck/appimage/AppRun steamdeck/appimage/build.sh
+          desktop-file-validate steamdeck/appimage/artur-edition.desktop
+      - name: Download the new Linux ZIP and check checksum
+        run: |
+          set -euo pipefail
+          mkdir -p downloaded tools output
+          gh release download "$RELEASE_TAG" --repo "$REPO" --pattern "$LINUX_ZIP*" --dir downloaded
+          (cd downloaded && sha256sum -c "$LINUX_ZIP.sha256")
+          unzip -t "downloaded/$LINUX_ZIP" | tail -n 1
+      - name: Download SHA256-pinned AppImage builder and runtime
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 -o tools/appimagetool.AppImage 'https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage'
+          echo 'ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  tools/appimagetool.AppImage' | sha256sum -c -
+          curl -fsSL --retry 3 -o tools/runtime-x86_64 'https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64'
+          echo '2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  tools/runtime-x86_64' | sha256sum -c -
+          chmod +x tools/appimagetool.AppImage tools/runtime-x86_64
+      - name: Build and launch-test standalone AppImage
+        run: |
+          set -euo pipefail
+          bash steamdeck/appimage/build.sh "downloaded/$LINUX_ZIP" tools/appimagetool.AppImage tools/runtime-x86_64 "output/$APPIMAGE"
+          APPIMAGE_EXTRACT_AND_RUN=1 "output/$APPIMAGE" --status | tee output/smoke.txt
+          grep -F 'Complete offline R2.18.1 runtime present' output/smoke.txt
+          sha256sum "output/$APPIMAGE" > "output/$APPIMAGE.sha256"
+      - name: Publish tested AppImage and SHA256
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" --repo "$REPO" --clobber "output/$APPIMAGE" "output/$APPIMAGE.sha256"
+          gh release view "$RELEASE_TAG" --repo "$REPO" --json assets --jq '.assets[].name'
