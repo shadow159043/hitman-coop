@@ -30,6 +30,10 @@ try {
     $Needed = @('dinput8.dll','ZHMModSDK.dll','crashpad_handler.exe','discord_game_sdk.dll','ResourceLib_HM3.dll','mods\HitmanCoop.dll')
     foreach ($File in $Needed) { if (!(Test-Path (Join-Path $SourceRetail $File))) { throw "Missing $File in Windows release" } }
     Copy-Item -LiteralPath (Join-Path $Repo 'steamdeck') -Destination $Bundle -Recurse -Force
+    # Root-level Desktop launcher: extract ZIP, then double-click the .desktop file.
+    foreach ($Entrypoint in @('INSTALL-ARTUR-EDITION.desktop','START-ARTUR-EDITION.sh')) {
+      Copy-Item -LiteralPath (Join-Path $Repo $Entrypoint) -Destination $Bundle -Force
+    }
     New-Item -ItemType Directory -Force (Join-Path $DeckOut 'payload\Retail'),(Join-Path $Bundle 'docs') | Out-Null
     Copy-Item -LiteralPath (Join-Path $Repo 'docs\steamdeck-installation.md') -Destination (Join-Path $Bundle 'docs')
     foreach ($File in $Needed) {
@@ -53,20 +57,25 @@ try {
     New-Item -ItemType Directory -Force $OutputDirectory | Out-Null
     $Output = Join-Path $OutputDirectory $ZipName
     if (Test-Path $Output) { Remove-Item -LiteralPath $Output -Force }
-    $Archive = [IO.Compression.ZipFile]::Open($Output,[IO.Compression.ZipArchiveMode]::Create)
-    try {
-       foreach ($File in @(Get-ChildItem -LiteralPath $Bundle -Recurse -File)) {
-         $Relative = $File.FullName.Substring($Bundle.Length+1).Replace('\','/')
-         [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($Archive,$File.FullName,$Relative,[IO.Compression.CompressionLevel]::Optimal) | Out-Null
-       }
-    } finally { $Archive.Dispose() }
+    # Python packages with Unix executable flags even when run on Windows.
+    # This allows Steam Deck's Dolphin / Ark to extract a directly launchable icon.
+    if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+      throw 'Python 3 is required to build the release ZIP (not required by Steam Deck users).'
+    }
+    & python (Join-Path $PSScriptRoot 'package-zip.py') $Bundle $Output
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to package Linux ZIP with executable Desktop Mode launcher.' }
     $TestZip = [IO.Compression.ZipFile]::OpenRead($Output)
     try {
       $Names = @($TestZip.Entries | ForEach-Object {$_.FullName})
-      foreach ($Required in @('steamdeck/install.sh','steamdeck/launch.sh','steamdeck/payload/Retail/mods/HitmanCoop.dll','steamdeck/payload/Retail/ZHMModSDK.dll','steamdeck/payload/RUNTIME-SHA256SUMS.txt','docs/steamdeck-installation.md')) {
+      foreach ($Required in @('INSTALL-ARTUR-EDITION.desktop','START-ARTUR-EDITION.sh','steamdeck/install.sh','steamdeck/launch.sh','steamdeck/payload/Retail/mods/HitmanCoop.dll','steamdeck/payload/Retail/ZHMModSDK.dll','steamdeck/payload/RUNTIME-SHA256SUMS.txt','docs/steamdeck-installation.md')) {
         if ($Names -notcontains $Required) {throw "ZIP missing: $Required"}
       }
-      Write-Output ("Validated {0} ZIP entries with normalized / separators." -f $Names.Count)
+      foreach ($Executable in @('INSTALL-ARTUR-EDITION.desktop','START-ARTUR-EDITION.sh','steamdeck/ui-install.sh')) {
+        $Entry = $TestZip.GetEntry($Executable)
+        $Mode = ($Entry.ExternalAttributes -shr 16) -band 511
+        if (($Mode -band 73) -ne 73) { throw "ZIP executable permissions missing for: $Executable" }
+      }
+      Write-Output ("Validated {0} ZIP entries with normalized / separators and launcher execute permissions." -f $Names.Count)
     } finally { $TestZip.Dispose() }
     $Hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Output).Hash.ToLowerInvariant()
     [IO.File]::WriteAllText("$Output.sha256","$Hash  $ZipName`n",$Utf8)

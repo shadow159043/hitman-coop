@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Install HITMAN Co-op - Artur Edition
+Comment=Open Steam Deck / Linux Mission Control to install or verify the mod
+Exec=/usr/bin/env bash -c "exec bash \"\\$(dirname \"\\$0\")/START-ARTUR-EDITION.sh\"" %k
+Icon=applications-games
+Terminal=false
+Categories=Utility;
+StartupNotify=false

@@ -12,7 +12,9 @@ On a physical PC booted directly into **Ubuntu 24.04.5 LTS** from an external Sa
 
 Install HITMAN World of Assassination through Steam, confirm it starts without mods, close the game, and switch to Steam Deck Desktop Mode. In Steam Properties > Compatibility select **Proton Experimental**.
 
-Download **`HitmanCoop-Artur-R2.18.1-SteamDeck-Linux-Proton.zip`** from the [R2.18.1 release](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.18.1-npc-disguise-safety-20261031). Extract it into a folder you intend to keep (such as `~/Downloads/ArturEdition`). Open the extracted folder in a terminal and run:
+Download **`HitmanCoop-Artur-R2.18.1-SteamDeck-Linux-Proton.zip`** from the [R2.18.1 release](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.18.1-npc-disguise-safety-20261031). Extract it into a folder you intend to keep (such as `~/Downloads/ArturEdition`). In Steam Deck **Desktop Mode**, open that folder in **Dolphin** and double-click **`INSTALL-ARTUR-EDITION.desktop`**. If SteamOS asks whether to trust or execute the downloaded shortcut, choose **Launch/Execute**. The ZIP includes Linux executable permissions; if another archive tool strips them, use the launcher's **Properties → Permissions → Is executable** setting. This opens Mission Control with no Terminal commands.
+
+If the desktop launcher cannot open, use this fallback in the extracted directory:
 
 ```bash
 bash steamdeck/ui-install.sh --gui
@@ -20,7 +22,7 @@ bash steamdeck/ui-install.sh --gui
 
 Steam Deck Desktop Mode uses KDE's built-in `kdialog`. Ubuntu/GNOME users should install Zenity with `sudo apt install -y zenity` before launching the graphical interface. It provides a clickable menu for **Install, Verify, Launch, Repair, Restore, Uninstall, Status, Help** and requires confirmation for modifications. If no dialog provider is available, run `bash steamdeck/ui-install.sh --terminal`. To add a graphical app-menu shortcut after extracting the ZIP, run `bash steamdeck/install-shortcut.sh`; keep the extracted package in that location.
 
-To launch the modded game on subsequent sessions, start **HITMAN from Steam normally using Proton Experimental**; the mod is installed inside the game's `Retail` folder. Mission Control is a separate installer/verification/repair tool, not an alternative game executable. For Steam Deck use **Desktop Mode** to run the installer. The GUI opens safely without modifying HITMAN. It will offer manual folder selection if Steam library discovery fails; selecting a folder alone does not install anything. The launch button requests the official Steam game and does not prove that Proton or multiplayer works.
+To launch the modded game on subsequent sessions, start **HITMAN from Steam normally using Proton Experimental**; the mod is installed inside the game's `Retail` folder. Mission Control is a separate installer/verification/repair tool, not an alternative game executable. For Steam Deck use **Desktop Mode** to run the installer. The clickable launcher and GUI open safely without modifying HITMAN. A Linux desktop may show a one-time trust/execute prompt for downloaded `.desktop` shortcuts. It will offer manual folder selection if Steam library discovery fails; selecting a folder alone does not install anything. The launch button requests the official Steam game and does not prove that Proton or multiplayer works.
 
 Alternatively:
 

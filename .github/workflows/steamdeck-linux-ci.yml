@@ -57,6 +57,7 @@ jobs:
           shellcheck --severity=error "${scripts[@]}"
           python3 -m py_compile steamdeck/lib/extract_release.py
           desktop-file-validate steamdeck/HITMAN-Coop-Artur-Deck.desktop
+          desktop-file-validate INSTALL-ARTUR-EDITION.desktop
           echo "PASS: Bash, ShellCheck errors, Python, .desktop validation."
 
       - name: Run independent Steam Deck regression tests
@@ -75,12 +76,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p ci-output
-          zip -q -r ci-output/HitmanCoop-Artur-SteamDeck-INSTALLER-ONLY.zip \
-            steamdeck docs/steamdeck-installation.md \
-            -x '*/__pycache__/*' '*.pyc' 'steamdeck/payload/*'
+          mkdir -p ci-output ci-stage/docs
+          cp -a steamdeck ci-stage/
+          cp INSTALL-ARTUR-EDITION.desktop START-ARTUR-EDITION.sh ci-stage/
+          cp docs/steamdeck-installation.md ci-stage/docs/
+          python3 steamdeck/package-zip.py ci-stage ci-output/HitmanCoop-Artur-SteamDeck-INSTALLER-ONLY.zip
           unzip -t ci-output/HitmanCoop-Artur-SteamDeck-INSTALLER-ONLY.zip | tail -n 1
           unzip -Z1 ci-output/HitmanCoop-Artur-SteamDeck-INSTALLER-ONLY.zip | grep -Fx 'steamdeck/install.sh'
+          unzip -Z1 ci-output/HitmanCoop-Artur-SteamDeck-INSTALLER-ONLY.zip | grep -Fx 'INSTALL-ARTUR-EDITION.desktop'
+          unzip -q ci-output/HitmanCoop-Artur-SteamDeck-INSTALLER-ONLY.zip -d ci-unpacked
+          test -x ci-unpacked/INSTALL-ARTUR-EDITION.desktop
+          test -x ci-unpacked/START-ARTUR-EDITION.sh
+          test -x ci-unpacked/steamdeck/ui-install.sh
           unzip -Z1 ci-output/HitmanCoop-Artur-SteamDeck-INSTALLER-ONLY.zip | grep -Fx 'steamdeck/tests/linux-zip-import.sh'
           if unzip -Z1 ci-output/HitmanCoop-Artur-SteamDeck-INSTALLER-ONLY.zip | grep -q 'steamdeck/payload/Retail/'; then
             echo 'FAIL: installer-only archive unexpectedly contains runtime files' >&2
