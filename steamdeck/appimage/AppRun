@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Standalone Artur Edition installer: the AppImage runtime mounts its bundled
+# contents automatically; users never need to extract the release ZIP.
+set -euo pipefail
+appdir="${APPDIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)}"
+installer="$appdir/usr/share/artur-edition/steamdeck/ui-install.sh"
+if [[ ! -f "$installer" ]]; then
+  printf 'Artur Edition: missing bundled Mission Control installer.\n' >&2
+  exit 1
+fi
+if (($#)); then
+  exec /usr/bin/env bash "$installer" "$@"
+fi
+exec /usr/bin/env bash "$installer" --gui
