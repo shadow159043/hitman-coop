@@ -76,6 +76,63 @@ cp "$tmp/mods.ini" "$tmp/stage/mods.ini"
 if [[ -f "$MANIFEST" ]]; then
   while IFS=$'\t' read -r rel expected origin; do
     [[ "$rel" == BACKUP ]] && continue
+    if [[ "$rel" == mods.ini ]]; then
+      # Keep all shared mods.ini edits and require the co-op entry to remain enabled.
+      [[ -f "$retail/mods.ini" ]] ||
+        die "mods.ini was removed after installation. Refusing to recreate shared settings automatically."
+      grep -Eiq '^[[:space:]]*\[HitmanCoop\][[:space:]]*
+  done < "$MANIFEST"
+fi
+# Prepare rollback copy of currently installed files, including repair state.
+mkdir -p "$tmp/before"
+for rel in "${FILES[@]}" mods.ini; do
+  if [[ -f "$retail/$rel" ]]; then
+    mkdir -p "$tmp/before/$(dirname "$rel")"
+    cp -p "$retail/$rel" "$tmp/before/$rel"
+  fi
+done
+rollback() {
+  local rel
+  warn "Installation failed: restoring pre-installation files."
+  for rel in "${FILES[@]}" mods.ini; do
+    if [[ -f "$tmp/before/$rel" ]]; then
+      cp -p "$tmp/before/$rel" "$retail/$rel" || true
+    else
+      rm -f "$retail/$rel" || true
+    fi
+  done
+}
+trap 'rollback; rm -rf "$tmp"' ERR
+for rel in "${FILES[@]}" mods.ini; do
+  # Repair must never overwrite mods.ini if another mod changed shared settings.
+  if [[ -f "$tmp/old-manifest" && "$rel" == mods.ini ]]; then continue; fi
+  mkdir -p "$retail/$(dirname "$rel")"
+  cp -p "$tmp/stage/$rel" "$retail/$rel"
+done
+mkdir -p "$STATE_DIR"
+new_manifest="$tmp/new-manifest"
+printf 'BACKUP\t%s\n' "$backup" > "$new_manifest"
+for rel in "${FILES[@]}" mods.ini; do
+  if [[ -f "$tmp/origins" ]]; then origin="$(awk -F'\t' -v r="$rel" '$1==r{print $2}' "$tmp/origins")"
+  else origin="$(awk -F'\t' -v r="$rel" '$1==r{print $3}' "$MANIFEST")"; fi
+  if [[ -f "$tmp/old-manifest" && "$rel" == mods.ini ]]; then
+    # Retain the original config hash. This prevents uninstall from silently
+    # reverting unrelated edits made by other tools since initial installation.
+    checksum="$(awk -F'\t' -v r="$rel" '$1==r{print $2}' "$tmp/old-manifest")"
+  else checksum="$(hash_file "$retail/$rel")"; fi
+  printf '%s\t%s\t%s\n' "$rel" "$checksum" "$origin" >> "$new_manifest"
+done
+cp "$new_manifest" "$MANIFEST.tmp"
+mv -f "$MANIFEST.tmp" "$MANIFEST"
+record_game "$retail"
+trap - ERR
+log "SUCCESS: Artur Edition R2.18.1 installed to $retail"
+log "Original files backed up outside the game under $backup"
+bash "$DECK_ROOT/verify.sh" --game "$retail"
+ "$retail/mods.ini" ||
+        die "HitmanCoop entry is missing from mods.ini. Review the shared config before repair."
+      continue
+    fi
     if [[ -f "$retail/$rel" && "$(hash_file "$retail/$rel")" != "$expected" ]]; then
       die "File modified since installation: $rel. Refusing to overwrite it."
     fi
