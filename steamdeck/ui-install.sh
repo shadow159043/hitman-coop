@@ -41,7 +41,7 @@ status_text() {
   printf 'Runtime: %s\n' "$payload"
   printf 'Version: R2.18.1 / 0.12.21 | SDK 4.2.1 | Protocol 16\n'
   printf 'Steam App ID: 1659040\n'
-  printf 'Proton DLL loading and cross-platform multiplayer: UNTESTED'
+  printf 'Windows <-> Ubuntu multiplayer: user-tested Nov 2026; physical Steam Deck: UNTESTED'
 }
 if ((STATUS_ONLY)); then status_text; exit 0; fi
 if [[ "$MODE" == terminal ]]; then
