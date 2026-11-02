@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
-      contents: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && 'write' || 'read' }}
+      contents: write
     env:
       RELEASE_TAG: ${{ inputs.release_tag || 'artur-r2.18.1-npc-disguise-safety-20261031' }}
       GH_TOKEN: ${{ github.token }}
