@@ -8,3 +8,5 @@ for test in "$root"/tests/test-*.sh; do
   count=$((count+1))
 done
 echo "PASS: $count Steam Deck test suites."
+
+bash "$root/test-one-click.sh"
