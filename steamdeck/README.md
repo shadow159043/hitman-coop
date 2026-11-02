@@ -8,7 +8,7 @@ This is a **separate Steam Deck installer and launcher**, not a native Linux por
 
 1. Download **`HitmanCoop-Artur-R2.18.1-SteamDeck-Linux-Proton.zip`** from the [R2.18.1 release](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.18.1-npc-disguise-safety-20261031). Windows users should use **`HitmanCoop-Artur-R2.18.1-Windows-Setup.exe`** instead. Close HITMAN. Ensure HITMAN World of Assassination is installed through Steam and select **Proton Experimental** in its Steam Properties > Compatibility.
 2. Extract this Steam Deck ZIP to a writable folder (for example Downloads).
-3. For a clickable **graphical Mission Control**, run `bash steamdeck/ui-install.sh --gui`. Steam Deck's KDE uses `kdialog`; on Ubuntu GNOME, install Zenity first with `sudo apt install -y zenity`. The interface automatically chooses a supported dialog toolkit. Use `bash steamdeck/ui-install.sh --terminal` if you prefer the text menu.
+3. **One-click graphical Mission Control:** in the extracted ZIP root, double-click **`INSTALL-ARTUR-EDITION.desktop`** in Dolphin. If asked, choose **Launch/Execute** to trust the downloaded launcher. The ZIP preserves executable permission bits for Linux. If an extractor drops the executable flag, use **Properties → Permissions → Is executable** or run `bash steamdeck/ui-install.sh --gui`. Steam Deck's KDE uses `kdialog`; on Ubuntu GNOME, install Zenity first with `sudo apt install -y zenity`. The interface automatically chooses a supported dialog toolkit. Use `bash steamdeck/ui-install.sh --terminal` if you prefer the text menu.
 4. The graphical menu provides **Install, Verify, Launch, Repair, Restore, Uninstall, Status, and Help**. It displays the detected game folder and whether the mod is installed. Nothing is installed merely by opening the menu.
 5. Optionally run `bash steamdeck/install-shortcut.sh` to add a **Mission Control launcher** to the Linux application menu. Keep the extracted package in its original location afterward.
 6. To install directly without the GUI, run `bash steamdeck/install.sh` with the bundled Windows runtime.
@@ -17,6 +17,8 @@ This is a **separate Steam Deck installer and launcher**, not a native Linux por
 9. **Launch HITMAN normally from your Steam Library** with Proton Experimental (or use Mission Control **Launch** / `bash steamdeck/launch.sh`). The installed mod loads within the Steam game; open the ZHMModSDK **CO-OP** menu using `~`.
 
 The scripts detect Steam libraries through `libraryfolders.vdf` and `appmanifest_1659040.acf`. To choose the game manually, use `--game "/path/to/HITMAN World of Assassination"` (the `Retail` folder also works).
+
+The desktop launcher resolves the extracted folder automatically, even if its path contains spaces. Keep the complete extracted folder together; do not move only the `.desktop` icon to another folder. Mission Control does not silently install files: choose Install and confirm the target first.
 
 ## Additional actions
 
