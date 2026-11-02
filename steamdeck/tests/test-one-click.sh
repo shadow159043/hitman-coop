@@ -26,7 +26,8 @@ python3 - "$launcher" <<'PY'
 import pathlib, shlex, subprocess, sys
 desktop = pathlib.Path(sys.argv[1])
 line = next(line for line in desktop.read_text().splitlines() if line.startswith("Exec="))
-argv = shlex.split(line.partition("=")[2])
+# Simulate Desktop Entry's additional backslash unescaping before execution.
+argv = [p.replace("\\$", "$") for p in shlex.split(line.partition("=")[2])]
 argv = [str(desktop) if arg == "%k" else arg for arg in argv]
 subprocess.run(argv, check=True)
 PY
