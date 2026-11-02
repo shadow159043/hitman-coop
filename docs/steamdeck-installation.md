@@ -87,7 +87,7 @@ bash steamdeck/repair.sh --package "/path/to/windows-release.zip"
 bash steamdeck/uninstall.sh
 ```
 
-The installer keeps a file-specific backup and manifest under `~/.local/state/hitman-coop-artur-deck/` (or `$XDG_STATE_HOME`). Uninstall restores originals and removes newly created files; it refuses to overwrite any file changed since installation. Keep that state directory for rollback.
+The installer keeps a file-specific backup and manifest under `~/.local/state/hitman-coop-artur-deck/` (or `$XDG_STATE_HOME`). **`mods.ini` is a shared file**: newer builds validate its `[HitmanCoop]` entry without treating unrelated edits as corruption, and repair preserves any other mods' settings. For safety, uninstall still refuses to overwrite a `mods.ini` changed after initial installation. Keep the original backups and state directory for rollback; do not delete the manifest to bypass a mismatch. If you encounter an older AppImage reporting `Modified or corrupted installed file: mods.ini`, upgrade the AppImage before attempting repair.
 
 If installation fails, preserve any error text. Report which installation step failed without sharing IP addresses, room passwords, Steam account IDs or private logs.
 

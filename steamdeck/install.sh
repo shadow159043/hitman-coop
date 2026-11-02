@@ -76,6 +76,14 @@ cp "$tmp/mods.ini" "$tmp/stage/mods.ini"
 if [[ -f "$MANIFEST" ]]; then
   while IFS=$'\t' read -r rel expected origin; do
     [[ "$rel" == BACKUP ]] && continue
+    if [[ "$rel" == mods.ini ]]; then
+      # Preserve shared configuration while requiring the HitmanCoop entry.
+      [[ -f "$retail/mods.ini" ]] ||
+        die "mods.ini was removed; refusing to recreate shared settings automatically."
+      grep -Eiq '^[[:space:]]*\[HitmanCoop\][[:space:]]*$' "$retail/mods.ini" ||
+        die "HitmanCoop entry is missing from mods.ini; review it before repair."
+      continue
+    fi
     if [[ -f "$retail/$rel" && "$(hash_file "$retail/$rel")" != "$expected" ]]; then
       die "File modified since installation: $rel. Refusing to overwrite it."
     fi
@@ -102,6 +110,8 @@ rollback() {
 }
 trap 'rollback; rm -rf "$tmp"' ERR
 for rel in "${FILES[@]}" mods.ini; do
+  # Do not overwrite mods.ini during repair: it belongs to multiple mods.
+  if [[ -f "$tmp/old-manifest" && "$rel" == mods.ini ]]; then continue; fi
   mkdir -p "$retail/$(dirname "$rel")"
   cp -p "$tmp/stage/$rel" "$retail/$rel"
 done
@@ -111,7 +121,13 @@ printf 'BACKUP\t%s\n' "$backup" > "$new_manifest"
 for rel in "${FILES[@]}" mods.ini; do
   if [[ -f "$tmp/origins" ]]; then origin="$(awk -F'\t' -v r="$rel" '$1==r{print $2}' "$tmp/origins")"
   else origin="$(awk -F'\t' -v r="$rel" '$1==r{print $3}' "$MANIFEST")"; fi
-  printf '%s\t%s\t%s\n' "$rel" "$(hash_file "$retail/$rel")" "$origin" >> "$new_manifest"
+  if [[ -f "$tmp/old-manifest" && "$rel" == mods.ini ]]; then
+    # Preserve original checksum to keep uninstall safe if other mods edited it.
+    checksum="$(awk -F'\t' -v r="$rel" '$1==r{print $2}' "$tmp/old-manifest")"
+  else
+    checksum="$(hash_file "$retail/$rel")"
+  fi
+  printf '%s\t%s\t%s\n' "$rel" "$checksum" "$origin" >> "$new_manifest"
 done
 cp "$new_manifest" "$MANIFEST.tmp"
 mv -f "$MANIFEST.tmp" "$MANIFEST"

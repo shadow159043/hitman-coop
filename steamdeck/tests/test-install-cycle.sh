@@ -27,6 +27,33 @@ bash "$root/install.sh" --game "$game" --package "$tmp/Artur Windows R2.18.1"
 rm -f "$retail/mods/HitmanCoop.dll"
 bash "$root/repair.sh" --game "$game" --package "$tmp/Artur Windows R2.18.1"
 bash "$root/verify.sh"
+# Regression: ZHMModSDK / a separate mod can change shared mods.ini after install.
+# Verify and repair must preserve those edits, not flag the mod DLL as corrupt.
+cp "$retail/mods.ini" "$tmp/installed-mods.ini"
+printf '\n[AnotherMod]\nconfigured=true\n' >> "$retail/mods.ini"
+changed_ini="$(sha256sum "$retail/mods.ini" | cut -d' ' -f1)"
+bash "$root/verify.sh" --game "$game"
+bash "$root/install.sh" --game "$game" --package "$tmp/Artur Windows R2.18.1"
+bash "$root/repair.sh" --game "$game" --package "$tmp/Artur Windows R2.18.1"
+[[ "$(sha256sum "$retail/mods.ini" | cut -d' ' -f1)" == "$changed_ini" ]]
+grep -Fq '[AnotherMod]' "$retail/mods.ini"
+if bash "$root/uninstall.sh" >/dev/null 2>&1; then
+  echo 'FAIL: uninstall overwrote a shared config edited after install' >&2
+  exit 1
+fi
+# A removed [HitmanCoop] entry is still a legitimate verification failure.
+sed -i '/^\[HitmanCoop\]$/d' "$retail/mods.ini"
+if bash "$root/verify.sh" --game "$game" >/dev/null 2>&1; then
+  echo 'FAIL: missing co-op section was accepted' >&2
+  exit 1
+fi
+if bash "$root/repair.sh" --game "$game" --package "$tmp/Artur Windows R2.18.1" >/dev/null 2>&1; then
+  echo 'FAIL: repair modified a shared config with missing co-op entry' >&2
+  exit 1
+fi
+# Restore the original recorded config for the existing safe-uninstall test.
+cp "$tmp/installed-mods.ini" "$retail/mods.ini"
+bash "$root/verify.sh"
 bash "$root/uninstall.sh"
 [[ "$(cat "$retail/ZHMModSDK.dll")" == 'previous sdk' ]]
 grep -Fq '[OtherMod]' "$retail/mods.ini"
