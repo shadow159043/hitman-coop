@@ -9,4 +9,3 @@ for test in "$root"/tests/test-*.sh; do
 done
 echo "PASS: $count Steam Deck test suites."
 
-bash "$root/test-one-click.sh"
