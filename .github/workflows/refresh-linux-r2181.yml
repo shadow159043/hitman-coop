@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 env:
   RELEASE_TAG: artur-r2.18.1-npc-disguise-safety-20261031
@@ -98,3 +99,9 @@ jobs:
           set -euo pipefail
           gh release upload "$RELEASE_TAG" --repo "$REPO" --clobber "output/$APPIMAGE" "output/$APPIMAGE.sha256"
           gh release view "$RELEASE_TAG" --repo "$REPO" --json assets --jq '.assets[].name'
+      - name: Record successful asset verification for Linux tester
+        run: |
+          set -euo pipefail
+          zip_hash="$(cut -d' ' -f1 downloaded/$LINUX_ZIP.sha256)"
+          app_hash="$(cut -d' ' -f1 output/$APPIMAGE.sha256)"
+          gh pr comment 4 --repo "$REPO" --body "Published **R2.18.1 Linux `mods.ini` safety fix**. ZIP SHA256: \`$zip_hash\`; AppImage SHA256: \`$app_hash\`. Both installers were rebuilt from the Windows-matched release, the AppImage passed the Ubuntu launch test, and both outputs were uploaded to the latest release. Workflow run: https://github.com/$REPO/actions/runs/$GITHUB_RUN_ID"
