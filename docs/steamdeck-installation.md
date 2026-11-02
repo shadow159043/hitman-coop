@@ -10,6 +10,20 @@ On a physical PC booted directly into **Ubuntu 24.04.5 LTS** from an external Sa
 
 ## Installing
 
+### Recommended: standalone installer (no extraction)
+
+On a Steam Deck, switch to **Desktop Mode** and download `Artur-Edition-R2.18.1-SteamDeck-Linux-Installer-x86_64.AppImage` from the [R2.18.1 release](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.18.1-npc-disguise-safety-20261031).
+
+1. In **Dolphin**, right-click the AppImage → **Properties → Permissions**, and enable **Is executable** if needed. Downloaded programs require this trust step on Linux.
+2. **Double-click the AppImage** to open **Mission Control** directly. The mod's original DLLs are already bundled inside; you do not extract a ZIP or run terminal commands.
+3. Choose **Install**, confirm the detected HITMAN folder, then choose **Verify**.
+4. Launch HITMAN normally through **Steam using Proton Experimental**. The AppImage is an installer, **not** the game executable.
+5. Keep the AppImage if you want to return to Mission Control later for repair or uninstall.
+
+**Compatibility note:** Some Linux systems require a compatible FUSE/AppImage runtime. The installer is tested in automated Ubuntu CI, but **has not yet been tested on physical Steam Deck hardware**. If double-clicking fails, use the ZIP alternative below.
+
+### Alternative: extract the ZIP and launch from Dolphin
+
 Install HITMAN World of Assassination through Steam, confirm it starts without mods, close the game, and switch to Steam Deck Desktop Mode. In Steam Properties > Compatibility select **Proton Experimental**.
 
 Download **`HitmanCoop-Artur-R2.18.1-SteamDeck-Linux-Proton.zip`** from the [R2.18.1 release](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.18.1-npc-disguise-safety-20261031). Extract it into a folder you intend to keep (such as `~/Downloads/ArturEdition`). In Steam Deck **Desktop Mode**, open that folder in **Dolphin** and double-click **`INSTALL-ARTUR-EDITION.desktop`**. If SteamOS asks whether to trust or execute the downloaded shortcut, choose **Launch/Execute**. The ZIP includes Linux executable permissions; if another archive tool strips them, use the launcher's **Properties → Permissions → Is executable** setting. This opens Mission Control with no Terminal commands.
