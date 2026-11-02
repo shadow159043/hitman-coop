@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=HITMAN Co-op Artur Edition Installer
+Comment=Install or verify Artur Edition on Steam Deck / Linux with Proton
+Exec=Artur-Edition-SteamDeck-Installer.AppImage
+Icon=artur-edition
+Terminal=false
+Categories=Game;
+StartupNotify=false

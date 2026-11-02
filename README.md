@@ -9,7 +9,8 @@
 | Platform | Download asset | How to launch |
 | --- | --- | --- |
 | **Windows** | `HitmanCoop-Setup-by-Artur-R2.18.1.exe` | Run the Windows setup, install, then start HITMAN normally from Steam |
-| **Steam Deck / Linux (Proton)** | `HitmanCoop-Artur-R2.18.1-SteamDeck-Linux-Proton.zip` | Extract the ZIP in Desktop Mode, double-click `INSTALL-ARTUR-EDITION.desktop` and choose Launch/Execute if prompted; Install → Verify, then launch HITMAN through Steam |
+| **Steam Deck / Linux (Proton) — recommended** | `Artur-Edition-R2.18.1-SteamDeck-Linux-Installer-x86_64.AppImage` | **No ZIP extraction.** In Desktop Mode, download the AppImage, allow execution in Dolphin Properties → Permissions (if required), then double-click it. Mission Control opens; choose Install → Verify and start HITMAN from Steam. |
+| Steam Deck / Linux manual ZIP | `HitmanCoop-Artur-R2.18.1-SteamDeck-Linux-Proton.zip` | Extract the ZIP and double-click `INSTALL-ARTUR-EDITION.desktop`. Use this if AppImage cannot launch. |
 | Windows manual archive | `HitmanCoop-Artur-R2.18.1-Windows-Mod.zip` | For experienced manual installers; prefer the Windows setup above |
 
 **Windows ↔ Ubuntu multiplayer verified (November 1, 2026):** HITMAN launched under Proton Experimental on Ubuntu 24.04.5 with a physical AMD GPU; Artur Edition loaded, and Steam invitations and multiplayer between Windows and Ubuntu worked in the user's live test. **A physical Steam Deck has not been tested yet**, so the Steam Deck package remains experimental. Both players must use **R2.18.1 / protocol 16**.
@@ -133,6 +134,10 @@ countdown for the perfect double hit.
 Windows SmartScreen may show a warning because this community installer is unsigned. Confirm that you downloaded it from this repository. The Windows manual ZIP is intended for experienced users, not a substitute for the setup program.
 
 ## Install on Steam Deck or Linux (Proton)
+
+**Recommended no-extraction installer:** Download `Artur-Edition-R2.18.1-SteamDeck-Linux-Installer-x86_64.AppImage` from the release. In **Desktop Mode** open **Dolphin**, right-click the downloaded AppImage → **Properties → Permissions → Is executable** (if not already enabled), then double-click it. The bundled installer starts **Mission Control** automatically, without extracting the ZIP. Choose **Install**, then **Verify**. Finally launch HITMAN through **Steam + Proton Experimental**. The AppImage requires a compatible AppImage runtime/FUSE setup; Steam Deck hardware remains unverified. If it does not launch, use the manual ZIP method below.
+
+### Manual ZIP alternative
 
 **Tested on Ubuntu 24.04.5 with AMD graphics, Steam and Proton Experimental; physical Steam Deck hardware remains untested.**
 

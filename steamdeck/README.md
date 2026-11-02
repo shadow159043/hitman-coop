@@ -1,3 +1,9 @@
+## Recommended no-extraction download
+
+Download `Artur-Edition-R2.18.1-SteamDeck-Linux-Installer-x86_64.AppImage` from the R2.18.1 GitHub release, switch to Desktop Mode, mark it executable in Dolphin's file Properties → Permissions (if necessary), and double-click it. Mission Control opens with the offline runtime bundled. Install and Verify there; launch the game normally through Steam. Keep the AppImage to reopen repair/rollback later. Steam Deck hardware remains experimental.
+
+The older ZIP installer described below stays available for users who prefer manual extraction or cannot launch the AppImage.
+
 # HITMAN Co-op — Artur Edition | Steam Deck / Proton (EXPERIMENTAL)
 
 This is a **separate Steam Deck installer and launcher**, not a native Linux port. It installs the exact Windows **Artur Edition R2.18.1 / 0.12.21** runtime into the Steam version of HITMAN World of Assassination and launches the original game via Steam (App ID **1659040**) and Proton. Multiplayer protocol remains **16**, SDK version **4.2.1**. No Windows source code is changed.
