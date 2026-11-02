@@ -9,7 +9,7 @@ export HOME="$tmp/home" XDG_STATE_HOME="$tmp/state"
 export ARTUR_DIALOG_TEST_LOG="$tmp/dialog.log" ARTUR_DIALOG_TEST_COUNT="$tmp/count"
 status="$(bash "$root/ui-install.sh" --status)"
 [[ "$status" == *"Artur Edition: Not installed"* ]]
-[[ "$status" == *"Proton DLL loading and cross-platform multiplayer: UNTESTED"* ]]
+[[ "$status" == *"physical Steam Deck: UNTESTED"* ]]
 echo "9" | bash "$root/ui-install.sh" --terminal >"$tmp/terminal-out" 2>&1
 grep -q 'Mission Control\|Artur Edition\|Steam Deck / Proton' "$tmp/terminal-out"
 
