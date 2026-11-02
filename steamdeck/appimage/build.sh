@@ -2,16 +2,18 @@
 # Build a standalone, offline, x86_64 AppImage from an already-published
 # Steam Deck Proton ZIP. The ZIP remains as a manual-install fallback.
 set -euo pipefail
-if (($# != 3)); then
-  printf 'Usage: bash steamdeck/appimage/build.sh verified-release.zip appimagetool.AppImage output.AppImage\n' >&2
+if (($# != 4)); then
+  printf 'Usage: bash steamdeck/appimage/build.sh verified-release.zip appimagetool.AppImage runtime-x86_64 output.AppImage\n' >&2
   exit 2
 fi
 source_zip="$(realpath -- "$1")"
 tool="$(realpath -- "$2")"
-output="$(realpath -m -- "$3")"
+runtime_file="$(realpath -- "$3")"
+output="$(realpath -m -- "$4")"
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 test -s "$source_zip"
 test -s "$tool"
+test -s "$runtime_file"
 tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
 appdir="$tmp/AppDir"
@@ -30,7 +32,7 @@ chmod -R a+rX "$appdir"
 mkdir -p "$(dirname "$output")"
 export ARCH=x86_64
 export APPIMAGE_EXTRACT_AND_RUN=1
-"$tool" "$appdir" "$output"
+"$tool" --runtime-file "$runtime_file" "$appdir" "$output"
 chmod 0755 "$output"
 test -s "$output"
 file "$output"
