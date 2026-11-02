@@ -8,7 +8,7 @@
 
 | Platform | Download asset | How to launch |
 | --- | --- | --- |
-| **Windows** | `HitmanCoop-Artur-R2.18.1-Windows-Setup.exe` | Run the Windows setup, install, then start HITMAN normally from Steam |
+| **Windows** | `HitmanCoop-Setup-by-Artur-R2.18.1.exe` | Run the Windows setup, install, then start HITMAN normally from Steam |
 | **Steam Deck / Linux (Proton)** | `HitmanCoop-Artur-R2.18.1-SteamDeck-Linux-Proton.zip` | Extract, open Terminal in the folder and run `bash steamdeck/ui-install.sh --gui`; click Install, Verify, then start HITMAN through Steam |
 | Windows manual archive | `HitmanCoop-Artur-R2.18.1-Windows-Mod.zip` | For experienced manual installers; prefer the Windows setup above |
 
@@ -125,7 +125,7 @@ countdown for the perfect double hit.
 ## Install on Windows
 
 1. **Close HITMAN.** Open the [Artur Edition R2.18.1 release](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.18.1-npc-disguise-safety-20261031).
-2. Download **`HitmanCoop-Artur-R2.18.1-Windows-Setup.exe`** (not the Linux ZIP).
+2. Download **`HitmanCoop-Setup-by-Artur-R2.18.1.exe`** (not the Linux ZIP).
 3. Run the installer and click **INSTALL**. Let it find HITMAN on Steam or Epic, or browse to the installed game folder.
 4. Start HITMAN normally through Steam. Press **`~`** (the key below Esc) to open ZHMModSDK, then select **CO-OP**.
 5. To uninstall, run the same Windows setup again and choose **UNINSTALL**.
