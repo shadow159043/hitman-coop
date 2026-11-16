@@ -633,7 +633,9 @@ void HitmanCoop::LoadSettings() {
     if (m_LocalBubble > 7.99f && m_LocalBubble < 8.01f)
         m_LocalBubble = 25.f;
 
-    m_AutoUpdate = GetSettingBool("general", "auto_update", true); // Opt out in CO-OP > About.
+    // The old Artur build persisted auto_update=false, even though updates were disabled.
+    // Use a new key so upgrading players get the new signed channel by default once.
+    m_AutoUpdate = GetSettingBool("general", "artur_signed_auto_update", true);
     m_AnyGameVersion = GetSettingBool("general", "any_game_version", false);
 
     // How much the log says (Log.h): info, or debug/trace ("verbose") for chasing a bug.
@@ -780,7 +782,7 @@ void HitmanCoop::SaveSettings() {
     SetSettingBool("general", "show_notifications", m_ShowToasts);
     SetSettingBool("general", "show_hud", m_ShowHud);
     SetSettingBool("general", "show_name_tag", m_ShowNameTag);
-    SetSettingBool("general", "auto_update", m_AutoUpdate);
+    SetSettingBool("general", "artur_signed_auto_update", m_AutoUpdate);
     {
         char s_Level[16];
         strncpy_s(s_Level, ToLowerCopy(coop::LogLevelName(static_cast<coop::LogLevel>(m_LogLevel))).c_str(), _TRUNCATE);
