@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Artur Edition v0.14.0 Steam Deck graphical Mission Control. Bundled source stays read-only.
+# Artur Edition v0.14.1 Steam Deck graphical Mission Control. Bundled source stays read-only.
 # Never installs anything until user clicks Install; never touches unrelated game folders.
 set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 installer="$root/installer.sh"
-title="HITMAN Co-op - Artur Edition 0.14.0 | Mission Control (EXPERIMENTAL)"
+title="HITMAN Co-op - Artur Edition 0.14.1 | Mission Control (EXPERIMENTAL)"
 [[ -f "$installer" && -f "$root/files/mods/HitmanCoop.dll" ]] ||
-  { echo "Missing bundled Artur 0.14.0 Linux runtime" >&2; exit 1; }
+  { echo "Missing bundled Artur 0.14.1 Linux runtime" >&2; exit 1; }
 mode=auto
 case "${1:-}" in
   --status) mode=status ;;
@@ -18,8 +18,8 @@ esac
 status_text() {
   local game=""
   game="$(bash "$installer" --list-games 2>/dev/null | head -n 1 || true)"
-  printf 'Artur Edition 0.14.0 / protocol 21 - Steam Deck / Proton EXPERIMENTAL\n'
-  printf 'Offline v0.14.0 payload: ready (game 3.290 and 3.280)\n'
+  printf 'Artur Edition 0.14.1 / protocol 21 - Steam Deck / Proton EXPERIMENTAL\n'
+  printf 'Offline v0.14.1 payload: ready (game 3.290 and 3.280)\n'
   if [[ -n "$game" ]]; then
     printf 'Detected HITMAN folder: %s\n' "$game"
     if [[ -f "$game/Retail/mods/HitmanCoop.dll" ]]; then
@@ -94,11 +94,11 @@ verify_game() {
   [[ -f "$retail/mods.ini" ]] && grep -Eiq '^[[:space:]]*\[HitmanCoop\][[:space:]]*$' "$retail/mods.ini" ||
     { echo "HitmanCoop isn't enabled in mods.ini"; return 1; }
   if cmp -s "$mod" "$root/files/mods/HitmanCoop.dll"; then
-    echo "PASS: Artur Edition v0.14.0 game 3.290 DLL matches bundled runtime."
+    echo "PASS: Artur Edition v0.14.1 game 3.290 DLL matches bundled runtime."
   elif [[ -f "$root/files-3.280/mods/HitmanCoop.dll" ]] && cmp -s "$mod" "$root/files-3.280/mods/HitmanCoop.dll"; then
-    echo "PASS: Artur Edition v0.14.0 game 3.280 DLL matches bundled runtime."
+    echo "PASS: Artur Edition v0.14.1 game 3.280 DLL matches bundled runtime."
   else
-    echo "FAIL: Installed DLL differs from the v0.14.0 Artur Edition payload."
+    echo "FAIL: Installed DLL differs from the v0.14.1 Artur Edition payload."
     return 1
   fi
   echo "PASS: mod loader files and [HitmanCoop] entry present."
@@ -115,7 +115,7 @@ run_action() {
   logfile="$(mktemp)"
   case "$action" in
     install|repair)
-      ask "Install/repair Artur Edition v0.14.0 in:\n$game\n\nExisting game files will be backed up by the installer." || { rm -f "$logfile"; return 0; }
+      ask "Install/repair Artur Edition v0.14.1 in:\n$game\n\nExisting game files will be backed up by the installer." || { rm -f "$logfile"; return 0; }
       if bash "$installer" --game "$game" --quiet --no-firewall >"$logfile" 2>&1; then ok=1; fi ;;
     uninstall)
       ask "Uninstall Artur Edition from:\n$game\n\nThe installer will restore backed up files." || { rm -f "$logfile"; return 0; }

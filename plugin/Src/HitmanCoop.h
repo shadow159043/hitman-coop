@@ -332,7 +332,7 @@ private:
     // Updating by itself (see Updater). What's new in the version just updated to is shown for a
     // while from the first frame drawn, and in About.
     Updater m_Updater;
-    bool m_AutoUpdate = false; // No signed Artur Edition update channel yet.
+    bool m_AutoUpdate = true; // Fork-signed updates; opt out in CO-OP > About.
     std::string m_UpdateUrl;
     Updater::State m_UpdateTold = Updater::State::Idle;
     std::string m_WhatsNew;

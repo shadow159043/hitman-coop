@@ -77,7 +77,7 @@ jobs:
                         _dist/*.sha256
 
     deck-appimage:
-        name: Steam Deck / Linux standalone AppImage (Artur v0.14.0)
+        name: Steam Deck / Linux standalone AppImage (Artur v0.14.1)
         runs-on: ubuntu-24.04
         needs: mod
         steps:
@@ -89,9 +89,9 @@ jobs:
             -   name: Validate matching Linux payload
                 run: |
                     set -euo pipefail
-                    test -s downloaded/HitmanCoop-Artur-0.14.0-linux.tar.gz
+                    test -s downloaded/HitmanCoop-Artur-0.14.1-linux.tar.gz
                     (cd downloaded && sha256sum --check HitmanCoop-Artur-0.14.0-linux.tar.gz.sha256)
-                    tar -tzf downloaded/HitmanCoop-Artur-0.14.0-linux.tar.gz | grep 'HitmanCoop-Artur-0.14.0/installer.sh'
+                    tar -tzf downloaded/HitmanCoop-Artur-0.14.1-linux.tar.gz | grep 'HitmanCoop-Artur-0.14.1/installer.sh'
                     bash -n steamdeck/appimage-v014/AppRun steamdeck/appimage-v014/build.sh steamdeck/appimage-v014/steamdeck-ui.sh
             -   name: Validate launch scripts and install AppImage tooling
                 run: |
@@ -109,10 +109,10 @@ jobs:
             -   name: Build and smoke-test offline AppImage
                 run: |
                     set -euo pipefail
-                    output='output/Artur-Edition-0.14.0-SteamDeck-Linux-Installer-x86_64.AppImage'
-                    bash steamdeck/appimage-v014/build.sh downloaded/HitmanCoop-Artur-0.14.0-linux.tar.gz tools/appimagetool.AppImage tools/runtime-x86_64 "$output"
+                    output='output/Artur-Edition-0.14.1-SteamDeck-Linux-Installer-x86_64.AppImage'
+                    bash steamdeck/appimage-v014/build.sh downloaded/HitmanCoop-Artur-0.14.1-linux.tar.gz tools/appimagetool.AppImage tools/runtime-x86_64 "$output"
                     APPIMAGE_EXTRACT_AND_RUN=1 "$output" --status | tee output/appimage-smoke-test.txt
-                    grep -F 'Offline v0.14.0 payload: ready' output/appimage-smoke-test.txt
+                    grep -F 'Offline v0.14.1 payload: ready' output/appimage-smoke-test.txt
                     # Artifacts download flat, so the published checksum must omit output/.
                     (cd output && sha256sum "$(basename "$output")" > "$(basename "$output").sha256")
                     cat "$output.sha256"
@@ -159,10 +159,10 @@ jobs:
                       --notes "EXPERIMENTAL PRERELEASE — original HITMAN Co-op created by Jordan Rodrigues. Integrates Jordan's upstream v0.14.0 BlackBox crash flight recorder, new NPC/body/item and scripted mission synchronization, modern Windows/Tailscale setup and Linux installer, while retaining Artur branding, avatar diagnostics and safe outfit guards. Fork protocol 21. Both players must use this same Artur RC; incompatible with official Jordan protocol 18 and Artur R2.18.1 protocol 16. Windows and Linux packages are separately versioned. Steam Deck hardware and real two-player gameplay on this RC have not yet been validated. Automatic updates disabled until this fork provides its own signed update feed. Use at your own risk; back up existing mods and use matching installation/uninstallation method. Artur R2.18.1 remains the last live user-tested stable release. GPL-3.0-or-later."
 
     publish-latest:
-        name: Publish latest Artur Edition 0.14.0 release after checks pass
+        name: Publish latest Artur Edition 0.14.1 with installers and signed updater
         runs-on: ubuntu-24.04
         needs: [mod, deck-appimage]
-        if: github.ref == 'refs/tags/artur-v0.14.0'
+        if: github.ref == 'refs/tags/artur-v0.14.1'
         permissions:
             contents: write
         env:
@@ -183,12 +183,18 @@ jobs:
                     set -euo pipefail
                     (cd downloads/windows && for sum in *.sha256; do sha256sum -c "$sum"; done)
                     (cd downloads/linux && sha256sum -c *.AppImage.sha256)
-                    test -s docs/RELEASE-0140.md
-                    gh release create "$GITHUB_REF_NAME" \
-                      downloads/windows/*.zip downloads/windows/*.exe downloads/windows/*.tar.gz downloads/windows/*.sha256 \
-                      downloads/linux/*.AppImage downloads/linux/*.AppImage.sha256 \
+                    test -s docs/RELEASE-0141.md
+                    # Device-first filenames make the right installer obvious. Generate checksums
+                    # after renaming so each .sha256 names the actual downloadable asset.
+                    mkdir -p release
+                    cp downloads/windows/HitmanCoop-Setup-by-Artur-0.14.1.exe release/Windows-PC-Artur-Edition-0.14.1-Setup.exe
+                    cp downloads/windows/HitmanCoop-Artur-0.14.1.zip release/Windows-PC-Artur-Edition-0.14.1-ZIP-Installer.zip
+                    cp downloads/windows/HitmanCoop-Artur-0.14.1-linux.tar.gz release/Linux-PC-Artur-Edition-0.14.1-Installer.tar.gz
+                    cp downloads/linux/Artur-Edition-0.14.1-SteamDeck-Linux-Installer-x86_64.AppImage release/Steam-Deck-Artur-Edition-0.14.1-Installer.AppImage
+                    (cd release && for file in *.exe *.zip *.tar.gz *.AppImage; do sha256sum "$file" > "$file.sha256"; done)
+                    gh release create "$GITHUB_REF_NAME" release/* \
                       --repo "$GITHUB_REPOSITORY" \
                       --verify-tag \
                       --latest \
-                      --title "Artur Edition 0.14.0 - Latest (Experimental)" \
-                      --notes-file docs/RELEASE-0140.md
+                      --title "Artur Edition 0.14.1 - Auto Updater (Experimental)" \
+                      --notes-file docs/RELEASE-0141.md

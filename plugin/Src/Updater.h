@@ -6,8 +6,8 @@
 #include <thread>
 #include <vector>
 
-// Keeps HITMAN Co-op up to date by itself. At game start it reads update.txt from the latest
-// GitHub release (the version, each file with its size and SHA-256, and what's new), downloads the
+// Keeps HITMAN Co-op up to date by itself. At game start it reads the fork-signed update.txt
+// from Artur Edition's dedicated GitHub updates branch (version, files, SHA-256 and notes), downloads the
 // files that differ from the installed ones and checks them, then swaps them in: a DLL the game has
 // loaded can be renamed but not overwritten, so the old one becomes <name>.hcold and the new one
 // takes its place. The game loads the new version the next time it starts, when the old files are
@@ -27,6 +27,7 @@ public:
         std::string path;
         uint64_t size = 0;
         std::string sha256;
+        std::string download; // signed release asset filename; defaults to the target basename
     };
 
     struct Manifest {

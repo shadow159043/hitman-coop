@@ -633,7 +633,7 @@ void HitmanCoop::LoadSettings() {
     if (m_LocalBubble > 7.99f && m_LocalBubble < 8.01f)
         m_LocalBubble = 25.f;
 
-    m_AutoUpdate = false; // Artur Edition has no fork-signed automatic update feed yet.
+    m_AutoUpdate = GetSettingBool("general", "auto_update", true); // Opt out in CO-OP > About.
     m_AnyGameVersion = GetSettingBool("general", "any_game_version", false);
 
     // How much the log says (Log.h): info, or debug/trace ("verbose") for chasing a bug.
@@ -1573,8 +1573,7 @@ void HitmanCoop::OnFrameUpdate(const SGameUpdateEvent& p_UpdateEvent) {
             m_Test.Trace(std::string("update: now ") + c_ModVersion + ", what's new: " + s_Notes.substr(0, 200));
         }
 
-        if (m_AutoUpdate && c_ArturSignedUpdatesAvailable)
-        {
+        if (m_AutoUpdate && c_ArturSignedUpdatesAvailable) {
             // The build for another game version installed: the right one (same version number,
             // other files) comes in with the next start.
             const bool s_Reinstall = !m_WrongGame.empty();

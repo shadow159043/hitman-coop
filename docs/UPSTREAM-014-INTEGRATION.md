@@ -1,6 +1,6 @@
 # Artur Edition — integration of Jordan's HITMAN Co-op v0.14.0
 
-**Status:** Artur Edition v0.14.0 has been [published as the latest experimental release](https://github.com/shadow159043/hitman-coop/releases/tag/artur-v0.14.0). Automated checks passed, but live multiplayer and physical Steam Deck tests are still required; it is not a validated stable gameplay build.
+**Status:** Artur Edition v0.14.1 adds a fork-owned signed automatic updater and is the [latest experimental release](https://github.com/shadow159043/hitman-coop/releases/tag/artur-v0.14.1). The previous 0.14.0 release remains available. Live multiplayer and physical Steam Deck update testing are still required.
 
 ## Base and preserved work
 
@@ -19,7 +19,7 @@ The underlying game and co-op code is experimental. This merge does not claim to
 
 ## Updater safety
 
-Jordan's signed update manifests and public key cannot be repurposed to update Artur Edition safely. Until a fork-controlled signing key and release feed exist, in-game automatic updates are **disabled** for Artur Edition; any update must be explicitly installed from the matching Artur release. Do not automatically download official Jordan DLLs over Artur Edition.
+Jordan's signed update manifests and public key cannot be repurposed for Artur Edition. Starting in 0.14.1, Artur Edition embeds its **own ECDSA P-256 public key** and checks the fork's signed `updates` branch with SHA-256 validation. The private key lives only in the release PC's gitignored `.signing/update-key.blob`; it must be backed up securely. Official Jordan DLLs are never downloaded over Artur Edition. 0.14.0 and earlier need a one-time manual upgrade; Proton/physical Steam Deck updating is still unverified.
 
 ## Gameplay validation still needed after publishing the experimental release
 

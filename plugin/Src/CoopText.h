@@ -6,7 +6,7 @@
 #include <string_view>
 
 // Words and numbers the game-thread code and the UI share.
-inline constexpr const char* c_ModVersion = "0.14.0";
+inline constexpr const char* c_ModVersion = "0.14.1";
 
 // The game version this build is for (set by plugin/CMakeLists.txt from the SDK it is built
 // against): "3.290" normally, "3.280" for the build players who can't update get (the installer
@@ -33,9 +33,9 @@ inline std::string UpdateFileFor(const std::string& p_GameVersion) {
 
 inline constexpr const char* c_Author = "Jordan Rodrigues";
 inline constexpr const char* c_EditionBy = "Artur";
-// Official upstream manifests are signed by Jordan, not by Artur Edition.
-// Disable autoupdates until this fork publishes and signs its own release feed.
-inline constexpr bool c_ArturSignedUpdatesAvailable = false;
+// Only Artur Edition manifests, signed with the fork-owned key in UpdateKey.h,
+// can change installed files. Never use original upstream update manifests.
+inline constexpr bool c_ArturSignedUpdatesAvailable = true;
 
 // The quick messages as they come (each can be rewritten under Settings).
 inline constexpr const char* c_DefaultQuickMessages[8] = {

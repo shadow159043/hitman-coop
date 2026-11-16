@@ -1,6 +1,6 @@
 # Artur Edition Steam Deck / Linux (Proton) installation
 
-**Newer experimental 0.14.0 release:** [Windows and Steam Deck downloads](https://github.com/shadow159043/hitman-coop/releases/tag/artur-v0.14.0). This guide below is for **legacy R2.18.1** only. Do not use its old installer or payload to upgrade to v0.14.0; install the new standalone 0.14.0 AppImage instead.
+**Newest experimental 0.14.1 release with signed in-game auto-updates:** [Windows and Steam Deck downloads](https://github.com/shadow159043/hitman-coop/releases/tag/artur-v0.14.1). This guide below is for **legacy R2.18.1** only. Do not use its old installer or payload to upgrade to v0.14.1; install the new standalone 0.14.1 AppImage instead.
 
 **Release download:** [R2.18.1 — Windows and Steam Deck/Linux packages](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.18.1-npc-disguise-safety-20261031). Choose **`HitmanCoop-Artur-R2.18.1-SteamDeck-Linux-Proton.zip`** for Linux; Windows players choose **`HitmanCoop-Artur-R2.18.1-Windows-Setup.exe`**.
 

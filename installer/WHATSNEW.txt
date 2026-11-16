@@ -1,3 +1,15 @@
+HITMAN Co-op - Artur Edition 0.14.1
+
+- First Artur Edition release with the fork's own signed automatic update feed.
+- Windows and Proton users can automatically check and stage verified updates at startup.
+- Updated builds are used when HITMAN is launched again; disabling automatic updates
+  is available in CO-OP > About.
+- Update manifests are ECDSA P-256 signed and pin SHA-256 hashes for installed files.
+- Official Jordan Rodrigues update packages are never used by Artur Edition.
+- Existing Artur 0.14.0 needs a one-time manual installer upgrade.
+- Steam Deck installer is bundled with the new update-enabled Windows DLL; Proton
+  automatic-update compatibility is experimental and still needs a physical test.
+
 HITMAN Co-op 0.14.0
 
 A milestone release: everything from the 0.13.9x betas below, plus this. Both players need 0.14.0

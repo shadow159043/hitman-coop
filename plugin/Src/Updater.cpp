@@ -5,6 +5,7 @@
 #include <winhttp.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -347,9 +348,15 @@ bool Updater::Parse(const std::string& p_Text, Manifest& p_Out) {
         else if (s_Key == "file") {
             File s_File;
 
-            if (!(s_Words >> s_File.path >> s_File.size >> s_File.sha256) || !SafePath(s_File.path) || s_File.sha256.size() != 64)
+            if (!(s_Words >> s_File.path >> s_File.size >> s_File.sha256) || !SafePath(s_File.path) || s_File.sha256.size() != 64 ||
+                !std::all_of(s_File.sha256.begin(), s_File.sha256.end(), [](unsigned char c) { return std::isxdigit(c) != 0; }))
                 return false;
 
+            if (!(s_Words >> s_File.download))
+                s_File.download = FileName(s_File.path); // backwards-compatible signed format
+            std::string s_Extra;
+            if (!SafePath(s_File.download) || s_File.download.find('/') != std::string::npos || (s_Words >> s_Extra))
+                return false;
             p_Out.files.push_back(s_File);
         }
         else if (s_Key == "notes")
@@ -478,14 +485,14 @@ void Updater::Run(std::string p_GameDir, std::string p_Version, std::string p_Ma
 
         std::string s_Data;
 
-        if (!HttpGet(s_Manifest.base + FileName(s_File.path), s_Data, 128ull * 1024 * 1024, m_Stop, s_Error)) {
+        if (!HttpGet(s_Manifest.base + s_File.download, s_Data, 128ull * 1024 * 1024, m_Stop, s_Error)) {
             s_Discard();
             return Set(State::Failed, s_Manifest.version, s_Error);
         }
 
         if (s_Data.size() != s_File.size || Sha256(s_Data) != s_File.sha256) {
             s_Discard();
-            return Set(State::Failed, s_Manifest.version, FileName(s_File.path) + " didn't match its SHA-256");
+            return Set(State::Failed, s_Manifest.version, s_File.download + " didn't match its SHA-256");
         }
 
         const fs::path s_Fresh = WithSuffix(s_Target, ".hcnew");

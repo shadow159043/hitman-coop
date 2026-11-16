@@ -1797,8 +1797,10 @@ void HitmanCoop::DrawAboutTab(const coop::SessionStatus& p_Status) {
 
     SectionTitle(ICON_MD_SYSTEM_UPDATE " Updates");
 
-    ImGui::TextWrapped("Artur Edition automatic updates are unavailable until this fork has its own signed release feed. "
-        "Do not install official upstream updates over this build.");
+    ImGui::TextWrapped("Artur Edition checks its own signed GitHub release feed at startup. New files are verified before being staged, then load when HITMAN starts again. Official upstream updates are never installed.");
+    if (ImGui::Checkbox("Automatically download signed Artur Edition updates", &m_AutoUpdate))
+        SaveSettings();
+    ImGui::TextDisabled("Restart HITMAN after changing this setting. The previous release stays available for manual rollback.");
     {
         const Updater::Status s_Update = m_Updater.Get();
         const char* s_Text = s_Update.state == Updater::State::Checking ? "Checking for a new version..." :
