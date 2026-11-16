@@ -90,7 +90,7 @@ jobs:
                 run: |
                     set -euo pipefail
                     test -s downloaded/HitmanCoop-Artur-0.14.1-linux.tar.gz
-                    (cd downloaded && sha256sum --check HitmanCoop-Artur-0.14.0-linux.tar.gz.sha256)
+                    (cd downloaded && sha256sum --check HitmanCoop-Artur-0.14.1-linux.tar.gz.sha256)
                     tar -tzf downloaded/HitmanCoop-Artur-0.14.1-linux.tar.gz | grep 'HitmanCoop-Artur-0.14.1/installer.sh'
                     bash -n steamdeck/appimage-v014/AppRun steamdeck/appimage-v014/build.sh steamdeck/appimage-v014/steamdeck-ui.sh
             -   name: Validate launch scripts and install AppImage tooling
