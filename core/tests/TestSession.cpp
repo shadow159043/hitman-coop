@@ -823,6 +823,40 @@ TEST(Session_RestartReachesThePartnerInTheSameMission) {
     CHECK(d.clientWorld.restarts == 0);
 }
 
+// Reliable restart requests can arrive after the receiver reloads the very same
+// mission. Rejecting the old host epoch prevents an unintended second restart.
+TEST(Session_LateRestartCannotRestartTheNextMissionRun) {
+    Duo d(136);
+    d.HostLoads(c_Miami, 2);
+    d.ClientLoads(c_Miami, 2, 0.f);
+    d.Start();
+    REQUIRE(d.StepUntilSynced(2.0));
+    const uint32_t oldEpoch = d.host.Status().epoch;
+
+    d.client.OnLocalRestart(c_Miami.scene); // queued, not delivered yet
+    d.hostWorld.UnloadScene();
+    d.host.OnLocalSceneUnloaded();
+    d.HostLoads(c_Miami, 2); // same scene, but a new host epoch
+    CHECK(d.host.Status().epoch != oldEpoch);
+
+    d.Step(0.5);
+    CHECK(d.hostWorld.restarts == 0);
+}
+
+TEST(Session_RestartDoesNotInterruptReceiverReloading) {
+    Duo d(137);
+    d.HostLoads(c_Miami, 2);
+    d.ClientLoads(c_Miami, 2, 0.f);
+    d.Start();
+    REQUIRE(d.StepUntilSynced(2.0));
+
+    d.host.OnLocalRestart(c_Miami.scene);
+    d.clientWorld.UnloadScene();
+    d.client.OnLocalSceneUnloaded(); // already tearing down before delivery
+    d.Step(0.5);
+    CHECK(d.clientWorld.restarts == 0);
+}
+
 TEST(Session_NpcPosesReachTheOtherGame) {
     Duo d(34);
     d.HostLoads(c_Miami, 5);

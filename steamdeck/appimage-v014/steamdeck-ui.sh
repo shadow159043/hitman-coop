@@ -18,7 +18,7 @@ esac
 status_text() {
   local game=""
   game="$(bash "$installer" --list-games 2>/dev/null | head -n 1 || true)"
-  printf 'Artur Edition 0.14.0 / protocol 19 - Steam Deck / Proton EXPERIMENTAL\n'
+  printf 'Artur Edition 0.14.0 / protocol 20 - Steam Deck / Proton EXPERIMENTAL\n'
   printf 'Offline v0.14.0 payload: ready (game 3.290 and 3.280)\n'
   if [[ -n "$game" ]]; then
     printf 'Detected HITMAN folder: %s\n' "$game"

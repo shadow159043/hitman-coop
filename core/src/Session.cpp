@@ -867,8 +867,10 @@ void Session::HandleMessage(const Message& p_Msg, double p_Now) {
         case MsgType::Restart: {
             MsgRestart s_Restart;
 
-            // Only into the same mission: the partner restarting something else changes nothing here.
-            if (Decode(p_Msg.payload, s_Restart) && m_World.IsInScene() && m_World.CurrentScene().scene == s_Restart.scene) {
+            // Never replay a restart from an older run of the *same* mission. Reliable
+            // delivery can lag behind the host advancing the scene epoch on reload.
+            if (Decode(p_Msg.payload, s_Restart) && IsSynced() &&
+                s_Restart.epoch == m_Epoch && m_World.CurrentScene().scene == s_Restart.scene) {
                 m_World.Notify(m_PeerName + " restarted the mission.");
                 m_World.RestartMission();
             }
@@ -1480,8 +1482,9 @@ void Session::UpdateLink(double p_Now) {
 }
 
 void Session::OnLocalRestart(const std::string& p_Scene) {
-    if (m_Conn && m_State == SessionState::Connected)
-        m_Conn->SendReliable(MsgType::Restart, Encode(MsgRestart { p_Scene }));
+    // A restart without a known host epoch must not trigger the peer in a new run.
+    if (m_Conn && m_State == SessionState::Connected && m_Epoch != 0 && !p_Scene.empty())
+        m_Conn->SendReliable(MsgType::Restart, Encode(MsgRestart { m_Epoch, p_Scene }));
 }
 
 void Session::UpdatePause() {

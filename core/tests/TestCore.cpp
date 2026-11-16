@@ -129,6 +129,15 @@ TEST(Protocol_RoundTripAll) {
         CHECK(Decode(Encode(m), o) && o.epoch == 4 && o.id == 0x1234);
     }
     {
+        MsgRestart m { 17, "assembly:/_pro/scenes/missions/miami/scene_flamingo.entity" }, o;
+        CHECK(Decode(Encode(m), o) && o.epoch == 17 && o.scene == m.scene);
+        m.epoch = 0;
+        CHECK(!Decode(Encode(m), o)); // no valid host run: fail closed
+        m.epoch = 17;
+        m.scene.clear();
+        CHECK(!Decode(Encode(m), o));
+    }
+    {
         MsgMissionEvent m { "ContractEnd", "{\"x\":1}" }, o;
         CHECK(Decode(Encode(m), o) && o.name == m.name && o.json == m.json);
     }

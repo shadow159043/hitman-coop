@@ -4,7 +4,7 @@
 
 This project incorporates Jordan Rodrigues's [HITMAN Co-op v0.14.0](https://github.com/JordanRodrigues021/hitman-coop/releases/tag/v0.14.0), including the new NPC, item, crash-reporting and Windows/Linux installer improvements. The separate **Artur Edition** retains its custom branding, extra avatar diagnostics, safer partner outfit handling and its one-file Linux Mission Control installer.
 
-**Important:** Artur Edition R2.18.1 release downloads still contain **0.12.21 / protocol 16**. The integration source in this branch is **0.14.0 / fork protocol 19** and is not yet a tested downloadable release. Do not combine old Artur DLLs with new upstream DLLs. Both players must install the same tested edition.
+**Important:** Artur Edition R2.18.1 release downloads still contain **0.12.21 / protocol 16**. The integration source in this branch is **0.14.0 / fork protocol 20** and is not yet a tested downloadable release. Do not combine old Artur DLLs with new upstream DLLs. Both players must install the same tested edition.
 
 [Existing R2.18.1 Windows/Linux downloads](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.18.1-npc-disguise-safety-20261031) · [Legacy Steam Deck installer](docs/steamdeck-installation.md) · [Original author and contributors](CREDITS.md)
 

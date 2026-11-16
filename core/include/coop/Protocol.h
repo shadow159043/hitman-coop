@@ -16,7 +16,8 @@ namespace coop {
 // 11: the host's mod version in Welcome, a player's colour and "away" in their status.
 // 18: upstream v0.14.0 wire format.
 // 19: Artur Edition integration; do not mix different fork builds.
-constexpr uint32_t kProtocolVersion = 19;
+// 20: mission restarts carry the host scene epoch to reject late requests from a previous run.
+constexpr uint32_t kProtocolVersion = 20;
 
 constexpr uint16_t kDefaultPort = 47047;
 constexpr size_t kMaxPacketSize = 1200;
@@ -371,12 +372,14 @@ struct MsgPause {
     bool Read(ByteReader& r) { return r.U8(paused) && paused <= 1; }
 };
 
-// The sender restarted this mission (the scene); the receiver restarts it too. Reliable.
+// The sender restarted this mission; apply only within the same host scene epoch.
+// Reliable messages can arrive after the other PC has already loaded a fresh run.
 struct MsgRestart {
+    uint32_t epoch = 0;
     std::string scene;
 
-    void Write(ByteWriter& w) const { w.Str(scene); }
-    bool Read(ByteReader& r) { return r.Str(scene, 256); }
+    void Write(ByteWriter& w) const { w.U32(epoch); w.Str(scene); }
+    bool Read(ByteReader& r) { return r.U32(epoch) && epoch != 0 && r.Str(scene, 256) && !scene.empty(); }
 };
 
 // A line of chat (or a quick message) from the sender's player. Reliable.
