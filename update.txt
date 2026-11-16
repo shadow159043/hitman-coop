@@ -1,0 +1,11 @@
+version 0.14.1
+base https://raw.githubusercontent.com/shadow159043/hitman-coop/updates/
+file crashpad_handler.exe 980480 8e01fe82154b7d8cce2eba5d060a44021d3d907843fc5a7d6f08117880d8b66a
+file dinput8.dll 754176 8b52eadc6b49aba4d10f8e895474e09c89528b0fa5c948ae1847b4460574f282
+file discord_game_sdk.dll 3891512 527768710ddb0953fce5eb1700c2566b6451135d76f1d0610b63907cd5ba94c5
+file ResourceLib_HM3.dll 6760448 67169dbe7025d4dbe333f50c21f9750f73d054a6ce7af02afb127325663c07bf
+file ZHMModSDK.dll 25708032 0363619143d34dc99fd6eeee84757df28151c89e4658d87460876d557a2d8028
+file mods/HitmanCoop.dll 2119168 1673e59e060d31d9f7cc8c9e30f640f2ead3041eaf6759a2d9f3075659ec29db
+file mods/HitmanCoop.sym 322282 cb41bd00ca51bed32ec6d6f367e176555be7c62c0bb7d6055fd137d2a5c9bf5d
+notes
+HITMAN Co-op Artur Edition 0.14.1. Fork-owned signed auto-updates, safer update checks and Linux/Steam Deck payload. Both players need the same edition. Restart HITMAN to activate an update.
