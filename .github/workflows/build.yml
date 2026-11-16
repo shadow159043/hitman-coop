@@ -57,7 +57,8 @@ jobs:
                 run: cmake -S . -B _build-3280 -G "Visual Studio 17 2022" -A x64 "-DCOOP_SDK:STRING=4.1.1" -DZHMMODSDK_DEVPKG_DIR="${{ github.workspace }}/_deps/old-4.1.1/devpkg"
 
             -   name: Build (game 3.280)
-                run: cmake --build _build-3280 --config RelWithDebInfo --target HitmanCoop
+                # The install target also copies HitmanCoop-NetTest.exe; build it as well.
+                run: cmake --build _build-3280 --config RelWithDebInfo
 
             -   name: Install (game 3.280)
                 run: cmake --install _build-3280 --config RelWithDebInfo --prefix _build-3280/install
