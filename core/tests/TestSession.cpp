@@ -1643,12 +1643,62 @@ TEST(Session_GameVersionPolicy) {
 TEST(Session_MissionEventsReachPeer) {
     Duo d(28);
     d.HostLoads(c_Miami, 0);
+    d.ClientLoads(c_Miami, 0, 0.f);
     d.Start();
-    d.Step(1.0);
+    REQUIRE(d.StepUntilSynced(2.0));
     d.host.SendMissionEvent("ContractEnd", "{\"Value\":{}}");
     d.Step(0.5);
     REQUIRE(!d.clientWorld.peerEvents.empty());
     CHECK(d.clientWorld.peerEvents.back() == "ContractEnd:{\"Value\":{}}");
+}
+
+// Mission events from the previous game run must never touch objects in a
+// fresh run of the same map, even when the old reliable packet arrives late.
+TEST(Session_LateMissionEventCannotApplyToNewRun) {
+    Duo d(138);
+    d.HostLoads(c_Miami, 0);
+    d.ClientLoads(c_Miami, 0, 0.f);
+    d.Start();
+    REQUIRE(d.StepUntilSynced(2.0));
+    const uint32_t s_OldEpoch = d.host.Status().epoch;
+
+    d.client.SendMissionEvent("Coop_ItemSpawn", "old-run");
+    d.hostWorld.UnloadScene();
+    d.host.OnLocalSceneUnloaded();
+    d.HostLoads(c_Miami, 0);
+    CHECK(d.host.Status().epoch != s_OldEpoch);
+    d.Step(0.5);
+    CHECK(d.hostWorld.peerEvents.empty());
+}
+
+TEST(Session_MissionEventsAreIgnoredDuringLoading) {
+    Duo d(139);
+    d.HostLoads(c_Miami, 0);
+    d.ClientLoads(c_Miami, 0, 0.f);
+    d.Start();
+    REQUIRE(d.StepUntilSynced(2.0));
+
+    d.host.SendMissionEvent("Coop_BodyOutfit", "stale-actor");
+    d.clientWorld.UnloadScene();
+    d.client.OnLocalSceneUnloaded();
+    d.Step(0.5);
+    CHECK(d.clientWorld.peerEvents.empty());
+}
+
+TEST(Session_ConnectionEventsWorkOutsideMissions) {
+    Duo d(140);
+    d.Start();
+    d.Step(1.0);
+    REQUIRE(d.host.Status().state == SessionState::Connected);
+    REQUIRE(d.client.Status().state == SessionState::Connected);
+
+    d.host.SendMissionEvent("Coop_Account", "synthetic-test-account");
+    d.host.SendMissionEvent("Coop_ReadyCheck", "");
+    d.host.SendMissionEvent("Coop_ItemSpawn", "must-not-send-without-a-scene");
+    d.Step(0.5);
+    REQUIRE(d.clientWorld.peerEvents.size() == 2);
+    CHECK(d.clientWorld.peerEvents[0] == "Coop_Account:synthetic-test-account");
+    CHECK(d.clientWorld.peerEvents[1] == "Coop_ReadyCheck:");
 }
 
 TEST(Session_ItemChangesReachPeer) {

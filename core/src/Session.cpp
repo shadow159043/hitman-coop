@@ -26,6 +26,13 @@ static constexpr double c_ReplaceSilence = 2.5;
 static constexpr double c_StallGap = 1.5;
 static constexpr double c_PoseHold = 1.5; // a puppet keeps its last pose this long without a new one
 
+// These are coordination/identity messages, not updates to entities in a scene.
+// They remain usable while players are in different menus or loading a mission.
+static bool ConnectionWideEvent(const std::string& p_Name) {
+    return p_Name == "Coop_Account" || p_Name == "Coop_Ready" || p_Name == "Coop_ReadyCheck" ||
+        p_Name == "Coop_Countdown";
+}
+
 // Tools (the connection test, the bot) send no game version, so they never trigger the warning.
 static bool VersionsDiffer(const std::string& p_A, const std::string& p_B) {
     return !p_A.empty() && !p_B.empty() && p_A != p_B;
@@ -250,7 +257,14 @@ void Session::SendMissionEvent(const std::string& p_Name, const std::string& p_J
     if (m_State != SessionState::Connected || !m_Conn)
         return;
 
-    MsgMissionEvent s_Event { p_Name, p_Json.size() > kMaxEventJson ? p_Json.substr(0, kMaxEventJson) : p_Json };
+    const bool s_ConnectionWide = ConnectionWideEvent(p_Name);
+    const uint32_t s_Epoch = s_ConnectionWide ? 0 : SyncedEpoch();
+
+    // Never queue a mission's game-object changes while we are between scenes.
+    if (!s_ConnectionWide && s_Epoch == 0)
+        return;
+
+    MsgMissionEvent s_Event { s_Epoch, p_Name, p_Json.size() > kMaxEventJson ? p_Json.substr(0, kMaxEventJson) : p_Json };
     m_Conn->SendReliable(MsgType::MissionEvent, Encode(s_Event));
 }
 
@@ -1059,8 +1073,13 @@ void Session::HandleMessage(const Message& p_Msg, double p_Now) {
         case MsgType::MissionEvent: {
             MsgMissionEvent s_Event;
 
+            // A queued event from an old mission must not modify newly created
+            // NPCs, bodies, items or scripted entities after a restart.
+            const bool s_Valid = Decode(p_Msg.payload, s_Event) &&
+                (ConnectionWideEvent(s_Event.name) ? s_Event.epoch == 0 :
+                    IsSynced() && s_Event.epoch == m_Epoch);
             // A big explosion is a burst of kills: 60 at once, then 15 a second.
-            if (Decode(p_Msg.payload, s_Event) && Admit(m_EventGate, p_Now, 15.0, 60.0))
+            if (s_Valid && Admit(m_EventGate, p_Now, 15.0, 60.0))
                 m_World.OnPeerMissionEvent(s_Event.name, s_Event.json);
 
             break;

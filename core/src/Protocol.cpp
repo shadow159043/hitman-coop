@@ -770,12 +770,13 @@ bool MsgSkeleton::Read(ByteReader& r) {
 }
 
 void MsgMissionEvent::Write(ByteWriter& w) const {
+    w.U32(epoch);
     w.Str(name);
     w.Str(json);
 }
 
 bool MsgMissionEvent::Read(ByteReader& r) {
-    return r.Str(name, 128) && r.Str(json, kMaxEventJson);
+    return r.U32(epoch) && r.Str(name, 128) && !name.empty() && r.Str(json, kMaxEventJson);
 }
 
 } // namespace coop

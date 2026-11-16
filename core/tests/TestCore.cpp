@@ -138,8 +138,11 @@ TEST(Protocol_RoundTripAll) {
         CHECK(!Decode(Encode(m), o));
     }
     {
-        MsgMissionEvent m { "ContractEnd", "{\"x\":1}" }, o;
-        CHECK(Decode(Encode(m), o) && o.name == m.name && o.json == m.json);
+        MsgMissionEvent m { 7, "ContractEnd", "{\"x\":1}" }, o;
+        CHECK(Decode(Encode(m), o) && o.epoch == 7 && o.name == m.name && o.json == m.json);
+        m.epoch = 0;
+        m.name = "Coop_Account";
+        CHECK(Decode(Encode(m), o) && o.epoch == 0 && o.name == "Coop_Account");
     }
     {
         MsgChat m { 1, "Wait for me" }, o;
@@ -471,7 +474,7 @@ TEST(Fuzz_AllDecoders) {
     FuzzDecoder<MsgOutfit>(s_Rng, Encode(MsgOutfit {}), c_Iterations);
     FuzzDecoder<MsgNpcSnapshot>(s_Rng, Encode(s_Snapshot), c_Iterations);
     FuzzDecoder<MsgNpcDied>(s_Rng, Encode(MsgNpcDied { 1, 2 }), c_Iterations);
-    FuzzDecoder<MsgMissionEvent>(s_Rng, Encode(MsgMissionEvent { "Kill", "{}" }), c_Iterations);
+    FuzzDecoder<MsgMissionEvent>(s_Rng, Encode(MsgMissionEvent { 1, "Kill", "{}" }), c_Iterations);
     FuzzDecoder<MsgChat>(s_Rng, Encode(MsgChat { 0, "hello there" }), c_Iterations);
     FuzzDecoder<MsgMark>(s_Rng, Encode(MsgMark { 1, 2, { 3.f, 4.f, 5.f } }), c_Iterations);
     FuzzDecoder<MsgBusy>(s_Rng, Encode(MsgBusy { 60, LoadStage_Loading, "scene" }), c_Iterations);

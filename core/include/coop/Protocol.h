@@ -17,7 +17,8 @@ namespace coop {
 // 18: upstream v0.14.0 wire format.
 // 19: Artur Edition integration; do not mix different fork builds.
 // 20: mission restarts carry the host scene epoch to reject late requests from a previous run.
-constexpr uint32_t kProtocolVersion = 20;
+// 21: mission events carry the same epoch, so late item/body/script events cannot affect a new run.
+constexpr uint32_t kProtocolVersion = 21;
 
 constexpr uint16_t kDefaultPort = 47047;
 constexpr size_t kMaxPacketSize = 1200;
@@ -479,7 +480,10 @@ struct MsgPlayerState {
     bool operator==(const MsgPlayerState&) const = default;
 };
 
+// Epoch 0 is reserved for connection-wide teamwork/account messages.
+// World-affecting mission events carry the host scene epoch.
 struct MsgMissionEvent {
+    uint32_t epoch = 0;
     std::string name;
     std::string json;
 
