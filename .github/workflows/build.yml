@@ -73,3 +73,51 @@ jobs:
                         _dist/*.exe
                         _dist/*.tar.gz
                         _dist/*.sha256
+
+    deck-appimage:
+        name: Steam Deck / Linux standalone AppImage (Artur v0.14.0)
+        runs-on: ubuntu-24.04
+        needs: mod
+        steps:
+            -   uses: actions/checkout@v4
+            -   uses: actions/download-artifact@v4
+                with:
+                    name: HitmanCoop
+                    path: downloaded
+            -   name: Validate matching Linux payload
+                run: |
+                    set -euo pipefail
+                    test -s downloaded/HitmanCoop-Artur-0.14.0-linux.tar.gz
+                    (cd downloaded && sha256sum --check HitmanCoop-Artur-0.14.0-linux.tar.gz.sha256)
+                    tar -tzf downloaded/HitmanCoop-Artur-0.14.0-linux.tar.gz | grep 'HitmanCoop-Artur-0.14.0/installer.sh'
+                    bash -n steamdeck/appimage-v014/AppRun steamdeck/appimage-v014/build.sh steamdeck/appimage-v014/steamdeck-ui.sh
+            -   name: Validate launch scripts and install AppImage tooling
+                run: |
+                    set -euo pipefail
+                    sudo apt-get update -qq
+                    sudo apt-get install -y --no-install-recommends shellcheck desktop-file-utils curl file
+                    shellcheck --severity=error steamdeck/appimage-v014/AppRun steamdeck/appimage-v014/build.sh steamdeck/appimage-v014/steamdeck-ui.sh
+                    desktop-file-validate steamdeck/appimage/artur-edition.desktop
+                    mkdir -p tools output
+                    curl -fsSL --retry 3 -o tools/appimagetool.AppImage 'https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage'
+                    echo 'ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  tools/appimagetool.AppImage' | sha256sum -c -
+                    curl -fsSL --retry 3 -o tools/runtime-x86_64 'https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64'
+                    echo '2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  tools/runtime-x86_64' | sha256sum -c -
+                    chmod +x tools/appimagetool.AppImage tools/runtime-x86_64
+            -   name: Build and smoke-test offline AppImage
+                run: |
+                    set -euo pipefail
+                    output='output/Artur-Edition-0.14.0-SteamDeck-Linux-Installer-x86_64.AppImage'
+                    bash steamdeck/appimage-v014/build.sh downloaded/HitmanCoop-Artur-0.14.0-linux.tar.gz tools/appimagetool.AppImage tools/runtime-x86_64 "$output"
+                    APPIMAGE_EXTRACT_AND_RUN=1 "$output" --status | tee output/appimage-smoke-test.txt
+                    grep -F 'Offline v0.14.0 payload: ready' output/appimage-smoke-test.txt
+                    sha256sum "$output" > "$output.sha256"
+                    cat "$output.sha256"
+            -   uses: actions/upload-artifact@v4
+                with:
+                    name: Artur-v014-SteamDeck-Linux-AppImage
+                    path: |
+                        output/*.AppImage
+                        output/*.AppImage.sha256
+                        output/appimage-smoke-test.txt
+                    retention-days: 14

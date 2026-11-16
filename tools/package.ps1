@@ -20,7 +20,9 @@ param(
     # certificate file (HITMANCOOP_SIGN_PFX, its password in HITMANCOOP_SIGN_PASSWORD), or Azure
     # Trusted Signing (HITMANCOOP_SIGN_DLIB = the Azure.CodeSigning.Dlib.dll path,
     # HITMANCOOP_SIGN_METADATA = its metadata.json). Without either, the files go out unsigned.
-    [switch]$RequireSigning
+    [switch]$RequireSigning,
+    # Fork updates need a separate signing key; do not reuse Jordan's signature feed.
+    [switch]$GenerateSignedUpdates
 )
 
 $ErrorActionPreference = "Stop"
@@ -91,7 +93,7 @@ function Sign-File([string]$Path) {
 }
 if (-not $SignMode) { Write-Host "Not signed (no signing set up): SmartScreen and some antivirus products will warn about these files." }
 
-$Name = "HitmanCoop-$Version"
+$Name = "HitmanCoop-Artur-$Version"
 $Stage = Join-Path $OutDir $Name
 Remove-Item $Stage -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force (Join-Path $Stage "licenses") | Out-Null
@@ -186,7 +188,7 @@ if ($LASTEXITCODE -ne 0) { throw "Making the Linux tarball failed." }
 $Payload = Join-Path $OutDir "payload.zip"
 Remove-Item $Payload -Force -ErrorAction SilentlyContinue
 Compress-Archive -Path (Get-ChildItem $Stage | Where-Object { $_.Name -ne "HitmanCoop-Setup.exe" } | ForEach-Object { $_.FullName }) -DestinationPath $Payload
-$Setup = Join-Path $OutDir "HitmanCoop-Setup-$Version.exe"
+$Setup = Join-Path $OutDir "HitmanCoop-Setup-by-Artur-$Version.exe"
 Build-Setup $Setup @("/resource:$Payload,payload.zip")
 Remove-Item $Payload -Force
 
@@ -200,6 +202,11 @@ foreach ($File in $Zip, $Setup, $Tar) {
     Write-Host "SHA-256 $Hash"
 }
 [System.IO.File]::WriteAllText((Join-Path $OutDir "SHA256SUMS-$Version.txt"), (($AllSums -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding $false))
+
+if (-not $GenerateSignedUpdates) {
+    Write-Host "Artur Edition: package built. Signed automatic updates disabled (separate fork key/feed not configured)."
+    return
+}
 
 # The self-update: for each build a manifest (version, each file the installer puts in the game's
 # Retail folder with its size and SHA-256, what's new) and those files under their own names. The
