@@ -1,12 +1,12 @@
 # HITMAN Co-op — Artur Edition
 
-**Development branch: upstream v0.14.0 integration (not a published Artur Edition release).**
+**Latest release: [Artur Edition 0.14.0 (Experimental)](https://github.com/shadow159043/hitman-coop/releases/tag/artur-v0.14.0), protocol 21.** Automated tests and installers pass, but this build still needs real two-player gameplay and physical Steam Deck testing.
 
 This project incorporates Jordan Rodrigues's [HITMAN Co-op v0.14.0](https://github.com/JordanRodrigues021/hitman-coop/releases/tag/v0.14.0), including the new NPC, item, crash-reporting and Windows/Linux installer improvements. The separate **Artur Edition** retains its custom branding, extra avatar diagnostics, safer partner outfit handling and its one-file Linux Mission Control installer.
 
-**Important:** Artur Edition R2.18.1 release downloads still contain **0.12.21 / protocol 16**. The integration source in this branch is **0.14.0 / fork protocol 21** and is not yet a tested downloadable release. Do not combine old Artur DLLs with new upstream DLLs. Both players must install the same tested edition.
+**Important:** Artur Edition 0.14.0 uses **protocol 21**; both players must install this same Artur build. The older Artur R2.18.1 uses **0.12.21 / protocol 16**, and Jordan's official v0.14.0 uses protocol 18. Never mix their DLLs. This latest Artur release is experimental, not proven crash-free.
 
-[Existing R2.18.1 Windows/Linux downloads](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.18.1-npc-disguise-safety-20261031) · [Legacy Steam Deck installer](docs/steamdeck-installation.md) · [Original author and contributors](CREDITS.md)
+[R2.18.1 rollback downloads](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.18.1-npc-disguise-safety-20261031) · [Legacy Steam Deck installer](docs/steamdeck-installation.md) · [Original author and contributors](CREDITS.md)
 
 ---
 
@@ -35,8 +35,7 @@ It's free, it's open source, and I keep updating it.
 
 ## 0.14.0: the milestone
 
-**[Download 0.14.0](../../releases/latest)**. Both players need it (it doesn't connect to 0.13.x).
-If you have 0.13.2 it updates itself the next time you start the game.
+**[Download Artur Edition 0.14.0](https://github.com/shadow159043/hitman-coop/releases/tag/artur-v0.14.0)**. This fork's network protocol is 21, not the official v0.14.0 protocol 18; both players need exactly the same Artur Edition build. **Artur Edition automatic updates are disabled** until the fork has its own signed update feed.
 
 This is the biggest update so far. It has everything from the six 0.13.9x betas (a new setup that
 installs Tailscale for you, no more antivirus "trojan" alarms from the old installer, shared body

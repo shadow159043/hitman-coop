@@ -156,3 +156,38 @@ jobs:
                       --prerelease \
                       --title "Artur Edition 0.14.0 RC1 — Experimental Windows and Steam Deck" \
                       --notes "EXPERIMENTAL PRERELEASE — original HITMAN Co-op created by Jordan Rodrigues. Integrates Jordan's upstream v0.14.0 BlackBox crash flight recorder, new NPC/body/item and scripted mission synchronization, modern Windows/Tailscale setup and Linux installer, while retaining Artur branding, avatar diagnostics and safe outfit guards. Fork protocol 21. Both players must use this same Artur RC; incompatible with official Jordan protocol 18 and Artur R2.18.1 protocol 16. Windows and Linux packages are separately versioned. Steam Deck hardware and real two-player gameplay on this RC have not yet been validated. Automatic updates disabled until this fork provides its own signed update feed. Use at your own risk; back up existing mods and use matching installation/uninstallation method. Artur R2.18.1 remains the last live user-tested stable release. GPL-3.0-or-later."
+
+    publish-latest:
+        name: Publish latest Artur Edition 0.14.0 release after checks pass
+        runs-on: ubuntu-24.04
+        needs: [mod, deck-appimage]
+        if: github.ref == 'refs/tags/artur-v0.14.0'
+        permissions:
+            contents: write
+        env:
+            GH_TOKEN: ${{ github.token }}
+        steps:
+            -   uses: actions/checkout@v4
+            -   uses: actions/download-artifact@v4
+                with:
+                    name: HitmanCoop
+                    path: downloads/windows
+            -   uses: actions/download-artifact@v4
+                with:
+                    name: Artur-v014-SteamDeck-Linux-AppImage
+                    path: downloads/linux
+            -   name: Check release asset hashes and publish latest
+                shell: bash
+                run: |
+                    set -euo pipefail
+                    (cd downloads/windows && for sum in *.sha256; do sha256sum -c "$sum"; done)
+                    (cd downloads/linux && sha256sum -c *.AppImage.sha256)
+                    test -s docs/RELEASE-0140.md
+                    gh release create "$GITHUB_REF_NAME" \
+                      downloads/windows/*.zip downloads/windows/*.exe downloads/windows/*.tar.gz downloads/windows/*.sha256 \
+                      downloads/linux/*.AppImage downloads/linux/*.AppImage.sha256 \
+                      --repo "$GITHUB_REPOSITORY" \
+                      --verify-tag \
+                      --latest \
+                      --title "Artur Edition 0.14.0 - Latest (Experimental)" \
+                      --notes-file docs/RELEASE-0140.md

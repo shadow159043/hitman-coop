@@ -1,6 +1,6 @@
 # Artur Edition — integration of Jordan's HITMAN Co-op v0.14.0
 
-**Status:** development integration, **not a tested or published Artur Edition binary**.
+**Status:** Artur Edition v0.14.0 has been [published as the latest experimental release](https://github.com/shadow159043/hitman-coop/releases/tag/artur-v0.14.0). Automated checks passed, but live multiplayer and physical Steam Deck tests are still required; it is not a validated stable gameplay build.
 
 ## Base and preserved work
 
@@ -21,13 +21,13 @@ The underlying game and co-op code is experimental. This merge does not claim to
 
 Jordan's signed update manifests and public key cannot be repurposed to update Artur Edition safely. Until a fork-controlled signing key and release feed exist, in-game automatic updates are **disabled** for Artur Edition; any update must be explicitly installed from the matching Artur release. Do not automatically download official Jordan DLLs over Artur Edition.
 
-## Before a release
+## Gameplay validation still needed after publishing the experimental release
 
 1. Pass Windows core tests, Linux installer static checks, build the mod against pinned SDK 4.2.1 (game 3.290), and validate the build for SDK 4.1.1 (game 3.280).
 2. Package matching Windows and Linux artifacts; ensure the new Linux installer is not a renamed R2.18.1 payload. Verify hashes and file versions.
 3. Test Windows to Windows and Windows to SteamOS / Steam Deck connections, room code, join through Tailscale, reconnect, restart, exit, body dragging, items and disguise ownership.
 4. Verify About > Save bug report produces the blackbox and correct Artur Edition version/protocol.
-5. Only after those tests, publish a new uniquely named Artur Edition release and update the root README to point at it.
+5. Promote a future build to fully validated stable status only after live gameplay succeeds; keep the current v0.14.0 release explicitly marked experimental in the meantime.
 
 ## Credits
 
