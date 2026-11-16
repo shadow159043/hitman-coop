@@ -1,256 +1,248 @@
+# HITMAN Co-op — Artur Edition
+
+**Development branch: upstream v0.14.0 integration (not a published Artur Edition release).**
+
+This project incorporates Jordan Rodrigues's [HITMAN Co-op v0.14.0](https://github.com/JordanRodrigues021/hitman-coop/releases/tag/v0.14.0), including the new NPC, item, crash-reporting and Windows/Linux installer improvements. The separate **Artur Edition** retains its custom branding, extra avatar diagnostics, safer partner outfit handling and its one-file Linux Mission Control installer.
+
+**Important:** Artur Edition R2.18.1 release downloads still contain **0.12.21 / protocol 16**. The integration source in this branch is **0.14.0 / fork protocol 19** and is not yet a tested downloadable release. Do not combine old Artur DLLs with new upstream DLLs. Both players must install the same tested edition.
+
+[Existing R2.18.1 Windows/Linux downloads](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.18.1-npc-disguise-safety-20261031) · [Legacy Steam Deck installer](docs/steamdeck-installation.md) · [Original author and contributors](CREDITS.md)
+
+---
+
+## Upstream 0.14.0 gameplay and troubleshooting reference
+
 # HITMAN Co-op
 
-## Download — Artur Edition R2.18.1 (Windows and Linux / Steam Deck)
+Two-player co-op for HITMAN World of Assassination. Made by Jordan Rodrigues.
 
-**Latest tested version:** Artur Edition **R2.18.1**, Co-op **v0.12.21**, **protocol 16**, ZHMModSDK **4.2.1**, for HITMAN **3.290.1.0**.
+[![Join the HITMAN Co-op Discord](https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white)](https://discord.gg/rQeHdpbKUp)
 
-**[Download the R2.18.1 release for either platform](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.18.1-npc-disguise-safety-20261031)**
+> This is a fan mod. It's not made or supported by IO Interactive and has nothing to do with them.
+> HITMAN is their trademark. You use it at your own risk, so please read the
+> [disclaimer](DISCLAIMER.md) first.
 
-| Platform | Download asset | How to launch |
-| --- | --- | --- |
-| **Windows** | `HitmanCoop-Setup-by-Artur-R2.18.1.exe` | Run the Windows setup, install, then start HITMAN normally from Steam |
-| **Steam Deck / Linux (Proton) — recommended** | `Artur-Edition-R2.18.1-SteamDeck-Linux-Installer-x86_64.AppImage` | **No ZIP extraction.** In Desktop Mode, download the AppImage, allow execution in Dolphin Properties → Permissions (if required), then double-click it. Mission Control opens; choose Install → Verify and start HITMAN from Steam. |
-| Steam Deck / Linux manual ZIP | `HitmanCoop-Artur-R2.18.1-SteamDeck-Linux-Proton.zip` | Extract the ZIP and double-click `INSTALL-ARTUR-EDITION.desktop`. Use this if AppImage cannot launch. |
-| Windows manual archive | `HitmanCoop-Artur-R2.18.1-Windows-Mod.zip` | For experienced manual installers; prefer the Windows setup above |
+You and a friend play the same mission at the same time. You can see each other walking around the
+level and the NPCs are shared between both games. If you knock a guard out, he's knocked out for your
+friend too. Same with kills, alerts and where people are walking. Bodies, doors and items are shared
+as well, so if your friend dumps a body in a closet, your guards won't find it either.
 
-**Windows ↔ Ubuntu multiplayer verified (November 1, 2026):** HITMAN launched under Proton Experimental on Ubuntu 24.04.5 with a physical AMD GPU; Artur Edition loaded, and Steam invitations and multiplayer between Windows and Ubuntu worked in the user's live test. **A physical Steam Deck has not been tested yet**, so the Steam Deck package remains experimental. Both players must use **R2.18.1 / protocol 16**.
+There's also some stuff to help you plan things together: you can mark targets, there's a small
+radar, quick signals, chat, and a ready check with a 3-2-1 countdown for when you both want to take
+out a target at the same moment.
 
-Read the [Windows setup](#install-on-windows) or [Steam Deck / Linux setup](#install-on-steam-deck-or-linux-proton) below before downloading. The Linux ZIP contains the Windows game mod running through Proton; it is **not** a Linux-native DLL.
+It's free, it's open source, and I keep updating it.
 
-**[Browse previous releases](https://github.com/shadow159043/hitman-coop/releases)** · [Steam Deck/Linux detailed guide](docs/steamdeck-installation.md) · [Original R2.3 release](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.3-20261030)
+## 0.14.0: the milestone
 
-> The repository is **public**. Download only the release assets needed for your platform; avoid complete-project backup archives for a normal installation.
+**[Download 0.14.0](../../releases/latest)**. Both players need it (it doesn't connect to 0.13.x).
+If you have 0.13.2 it updates itself the next time you start the game.
 
----
+This is the biggest update so far. It has everything from the six 0.13.9x betas (a new setup that
+installs Tailscale for you, no more antivirus "trojan" alarms from the old installer, shared body
+drags, NPCs animated the same in both games, signed updates) and a new round of fixes from your bug
+reports. But the main change is in **how bugs get found and fixed from now on**.
 
-> **Artur compatibility edition (R2.18.1 / Linux Proton experimental).** This fork updates the original HITMAN Co-op
-> for HITMAN 3.290.1.0 / ZHMModSDK 4.2.1. The co-op developer and original author is
-> **Jordan Rodrigues**. Artur is credited for this edition, not as creator of the original game mod.
-> See [two-PC validation](docs/two-pc-test-20261030.md) and [credits](CREDITS.md).
+### A new way of logging
 
-**Two-player co-op for HITMAN World of Assassination.**
-Created by **Jordan Rodrigues**.
+Until now the log only kept what its level allowed. The moments right before a crash, or before an
+NPC got stuck, were usually missing. Then the only thing to do was turn on verbose logging and try
+to make the bug happen again.
 
-> **Fan-made project.** HITMAN Co-op is not made, endorsed, supported or affiliated with
-> IO Interactive. "HITMAN" and related names are trademarks of their owners. Use it at your own
-> risk: read the [disclaimer](DISCLAIMER.md) before you install it.
+0.14.0 adds a **flight recorder**. The mod now keeps the last several thousand detailed events in
+memory all the time, at any log level:
 
-Play a mission together with a friend: you see each other in the level, the NPCs are shared (who
-dies, who is knocked out, who is alerted, where they walk), doors and items are shared, and you get
-everything you need to work as a team: marks, chat, signals, a radar, a ready check and a 3-2-1
-countdown for the perfect double hit.
+- every NPC that changed hands between the two games, and why
+- every event the game sends
+- every scripted step of the mission
+- every item given to your partner's copy
+- the NPCs around you, every 20 seconds
 
-> ❤️ **HITMAN Co-op is free, and made by one young developer.** If it gives you and a friend a great
-> night, please consider [supporting me](#support-the-developer). Even a small tip makes my day.
+All of it is written out with every crash, and into every bug report (`HitmanCoop-blackbox.txt`).
+**One bug report from each player is now enough to replay what both games did, side by side**,
+without asking anyone to reproduce anything.
 
----
+Crash reports changed too:
 
-## Contents
+- They name the mod's own functions.
+- They show the exact instruction that failed, and what the mod was doing at that moment.
+- They end with the last 40 events.
 
-- [Download — Windows and Steam Deck / Linux](#download--artur-edition-r2181-windows-and-linux--steam-deck)
-- [Features](#features)
-- [Requirements](#requirements)
-- [Install on Windows](#install-on-windows)
-- [Install on Steam Deck or Linux (Proton)](#install-on-steam-deck-or-linux-proton)
-- [Play together](#play-together)
-- [Playing over the internet with Tailscale (recommended)](#playing-over-the-internet-with-tailscale-recommended)
-- [Controls and hotkeys](#controls-and-hotkeys)
-- [Settings](#settings)
-- [Joining over the internet](#joining-over-the-internet)
-- [Run your own co-op server](#run-your-own-co-op-server)
-- [Troubleshooting](#troubleshooting)
-- [FAQ](#faq)
-- [What's new](#whats-new)
-- [Build from source](#build-from-source)
-- [❤️ Support the developer](#support-the-developer)
-- [Credits and licence](#credits-and-licence)
+Faults the mod catches and survives are written down too, so they get fixed even if nobody noticed.
+This is how the two crashes in 0.14.0 were found: from two players' crash files, traced to the exact
+line in minutes.
 
----
+### Also in 0.14.0
 
-## Features
+- **Two crashes fixed:**
+  - the partner's game crashing when you drew a rifle;
+  - the partner's game crashing when you quit to the menu.
+- **NPCs facing the wrong way** (walking north while facing south) on one player's screen: every
+  shared NPC is now pinned every frame to exactly how it stands in the other game.
+- **Guards stuck with a "?"** after a noise: an NPC that hears something you throw, or that your game
+  starts something with, is now run by your game until it's done. NPCs that are searching or alarmed
+  no longer switch between the two games halfway through.
+- **Missions getting stuck** (the Hawke's Bay NDA): a scripted step one player does, like signing a
+  paper or sabotaging something, now happens in both games, so targets react for both of you.
+- **The setup now tunes the game itself for co-op.** HITMAN reconnects to IOI's servers on its own
+  instead of freezing the mission with a "connection lost" box. There's a tick box for it, and
+  uninstalling puts it back.
 
-**A shared mission**
-- Your partner's 47 in your game, animated with their exact movements (their whole skeleton pose,
-  30 times a second), wearing their disguise. While they wear one of 47's own suits, you see them
-  in civilian clothes with 47's head (a suit on their stand-in crashes the game): look for their
-  name tag.
-- Shared NPCs: kills, knock-outs (by any means), alert levels, and NPCs walking where they walk in
-  your partner's game. An NPC your partner has hold of stops reacting in your game, so a guard you
-  both take down at the same moment doesn't see the other takedown.
-- Shared bodies: a body your partner drags away or hides in a closet or container is hidden in your
-  game too, so your guards don't find it.
-- Shared doors and items: what your partner picks up disappears for you; what they drop or throw
-  lands where it lands. What your partner holds shows in their stand-in's hand.
-- Pause together, restart together, and start together (your mission waits while your partner's
-  game is still loading in).
-- Your partner's stand-in is invisible to the AI and can't be hurt: their own game decides what
-  happens to them.
+All the changes are in the [changelog](CHANGELOG.md) and
+[installer/WHATSNEW.txt](installer/WHATSNEW.txt).
 
-**Teamwork**
-- **Marks**: aim and press the middle mouse button. Twice quickly to warn of danger; again later to
-  take it back. Marks follow the person marked, label targets, and hit walls and objects at any height.
-- **Signals** (OK, wait, help, look here) over your head on your partner's screen.
-- **Ready check**, a latency-compensated **3-2-1 countdown**, **"where are you?"**, **"come to me"** and
-  **regroup** (puts you right behind your partner).
-- **Chat** and eight quick messages, which you can rewrite.
+## Discord
 
-**Always knowing where your partner stands**
-- HUD: ping and packet loss, distance, how alert the NPCs around them are, trespassing, their
-  disguise, which menu they have open, whether they're loading, away or idle.
-- Name tag over their head in the colour they picked (orange or red when they're in trouble), with
-  the height difference, and an arrow at the edge of the screen when they're off it.
-- Radar and compass strip with your partner and both players' marks.
-- Kill feed, completed challenges, and alerts when your partner is spotted, hunted or in combat.
-- Silent Assassin watch for the team, a mission summary at the end, and a co-op record across sessions.
+There's a [HITMAN Co-op Discord](https://discord.gg/rQeHdpbKUp) now. You can find someone to play
+with (by platform and region), hop in the two-player voice rooms, get help installing, report bugs,
+suggest stuff and see what I'm working on. New releases get posted there first, and you can share
+clips of your best double hits. Honestly it's the quickest way to get a bug fixed.
 
-**Made for real connections**
-- Join codes through a small relay server, or direct by IP (LAN, Tailscale, port forwarding).
-- Smooth playback that adapts to your connection, less detail sent when the link struggles,
-  automatic reconnect, and loading screens that never time you out.
-- Works with the game online or offline. No IO Interactive, Steam or Epic servers are used.
+Team applications are open until 30 November 2026. I'm looking for moderators, testers,
+contributors and people to host events. You can [apply here](https://forms.gle/vtcxvPjS4GTSKxbG9).
 
-**Comfort**
-- Every hotkey can be rebound (with Ctrl, Shift or Alt) in the Hotkeys tab.
-- HUD position, size and background; name tag size; metres or feet; colour-blind friendly colours;
-  streamer mode (hides join codes and IP addresses); notification length and filters.
+## A note on AI
 
-## Requirements
+I want to be upfront about this. I used an AI coding assistant (Claude) while making this mod and it
+helped me a lot. I'm a single developer, I'm young, and I'm still in school. Building something this
+big alone, single-handedly, just wasn't going to happen any other way, and I wanted to get it out
+as soon as I could so people could actually play it.
 
-- HITMAN World of Assassination on **Steam** (Windows or Linux via Proton Experimental), or **Epic** (Windows).
-  The Microsoft Store / Game Pass version can't be modded.
-- Both players need the **same version of HITMAN Co-op**.
-- You play together at a location **you both own** (a friend with only some locations can play
-  those with you). The mod never takes anyone to a location they didn't start themselves.
-- **Artur R2.18.1 targets HITMAN 3.290.1.0, ZHMModSDK 4.2.1 and protocol 16.** Both players must run the same Artur Edition version. Linux requires the Steam game and Proton Experimental.
+The idea is mine. I designed how it works, paid for the AI plans and usage myself, and tested every
+build in the game more times than I can count. A lot of the fixes came straight from bug reports
+people sent in. HITMAN was never made for multiplayer, so getting two games to agree on every
+guard, body and door meant breaking things over and over, reading logs and figuring out what the
+game was actually doing.
 
-## Install on Windows
+I know some people don't want to use mods made with AI, and that's okay. Nobody has to use this.
+If you do try it, I'd love to hear what you think, good or bad. Criticism on any part of it is
+welcome. If something breaks, I'll fix it as fast as I can. So far there have been six updates in
+the first week, almost all of them from player reports.
 
-1. **Close HITMAN.** Open the [Artur Edition R2.18.1 release](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.18.1-npc-disguise-safety-20261031).
-2. Download **`HitmanCoop-Setup-by-Artur-R2.18.1.exe`** (not the Linux ZIP).
-3. Run the installer and click **INSTALL**. Let it find HITMAN on Steam or Epic, or browse to the installed game folder.
-4. Start HITMAN normally through Steam. Press **`~`** (the key below Esc) to open ZHMModSDK, then select **CO-OP**.
-5. To uninstall, run the same Windows setup again and choose **UNINSTALL**.
+Other people have tried co-op for HITMAN before me (there's even an early multiplayer experiment
+called Hitmen inside ZHMModSDK), so I'm not claiming to be the first. This is just my go at it.
 
-Windows SmartScreen may show a warning because this community installer is unsigned. Confirm that you downloaded it from this repository. The Windows manual ZIP is intended for experienced users, not a substitute for the setup program.
+## What's in it
 
-## Install on Steam Deck or Linux (Proton)
+The mission
+- Your friend shows up in your game as their 47, moving exactly how they move, in whatever disguise
+  they have on. If they're wearing one of 47's own suits you'll see them in normal clothes instead
+  (putting the suit on the copy crashes the game), so look for their name tag.
+- NPCs are shared: kills, knockouts, alert levels and where they walk. A guard your friend is
+  holding stops reacting in your game, so you can both take someone down at once without the other
+  takedown getting noticed.
+- Bodies your friend drags off or hides in a closet get hidden in your game too.
+- Doors and items are shared. If your friend picks something up it disappears for you, and what
+  they're holding shows in their hand.
+- Pause together, restart together, and start together (your mission waits until your friend has
+  loaded in).
+- Your friend's copy can't be seen by the AI or hurt. Their own game decides what happens to them.
+- It updates itself. New versions download in the background and get used the next time you start
+  the game, and you're shown what changed.
 
-**Recommended no-extraction installer:** Download `Artur-Edition-R2.18.1-SteamDeck-Linux-Installer-x86_64.AppImage` from the release. In **Desktop Mode** open **Dolphin**, right-click the downloaded AppImage → **Properties → Permissions → Is executable** (if not already enabled), then double-click it. The bundled installer starts **Mission Control** automatically, without extracting the ZIP. Choose **Install**, then **Verify**. Finally launch HITMAN through **Steam + Proton Experimental**. The AppImage requires a compatible AppImage runtime/FUSE setup; Steam Deck hardware remains unverified. If it does not launch, use the manual ZIP method below.
+Working as a team
+- Marks: aim and press the middle mouse button. Press it twice fast to mark danger, and again later
+  to remove it. Marks stick to the person you marked.
+- Signals over your head (OK, wait, help, look here).
+- Ready check, 3-2-1 countdown, "where are you?", "come to me" and regroup (teleports you behind
+  your friend).
+- Chat and eight quick messages you can change.
 
-### Manual ZIP alternative
+Keeping track of your friend
+- A HUD with ping, distance, how alert the NPCs near them are, their disguise, and whether they're
+  in a menu, loading or away.
+- A name tag over their head (it goes orange or red when they're in trouble) and an arrow at the
+  edge of the screen when they're off it.
+- Radar, compass, kill feed, Silent Assassin tracking for the team and a summary at the end.
 
-**Tested on Ubuntu 24.04.5 with AMD graphics, Steam and Proton Experimental; physical Steam Deck hardware remains untested.**
+Connecting
+- Join codes through a small relay server, or straight by IP (LAN, Tailscale, port forwarding).
+- It adapts to bad connections and reconnects by itself if you drop.
+- It never uses IO Interactive's, Steam's or Epic's servers. It works with the game online or offline.
 
-1. Install **HITMAN World of Assassination (Steam App ID 1659040)**. In Steam, open HITMAN **Properties → Compatibility → Force a specific compatibility tool → Proton Experimental**.
-2. Start unmodded HITMAN once and confirm that it loads, then **close the game**.
-3. From the [same R2.18.1 release](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.18.1-npc-disguise-safety-20261031), download **`HitmanCoop-Artur-R2.18.1-SteamDeck-Linux-Proton.zip`** (not the Windows EXE). Extract the ZIP into a permanent folder such as `~/Downloads/ArturEdition`.
-4. In **Steam Deck Desktop Mode**, open the extracted folder in **Dolphin** and double-click **`INSTALL-ARTUR-EDITION.desktop`**. If SteamOS asks whether to trust or execute the shortcut, choose **Launch/Execute**. The ZIP preserves executable permissions; you may need to enable **Properties → Permissions → Is executable** if another extractor strips them. On Ubuntu GNOME, install the graphical dialog tool if missing using `sudo apt install -y zenity unzip`.
-5. **Mission Control** should open immediately — no Terminal commands required. If the desktop launcher is blocked, run `bash steamdeck/ui-install.sh --gui` from the extracted folder as the fallback.
+You can also rebind every hotkey, move and resize the HUD, switch to feet, turn on colour-blind
+colours, and there's a streamer mode that hides join codes and IP addresses.
 
-6. In Mission Control choose **Status** to confirm HITMAN is detected, then **Install**, then **Verify**. If automatic discovery fails, choose the Steam HITMAN game folder manually. **Do not point it at a Windows installation.**
-7. Open HITMAN **through your normal Steam Library entry** with Proton Experimental. Press **`~`** to open the SDK and find the **CO-OP** interface. Use the same game/mod version on your Windows multiplayer partner.
-8. If ZHMModSDK does **not** load, try this under **Steam → HITMAN → Properties → General → Launch Options**, saving any existing option first:
+## What you need
 
-   ```text
-   WINEDLLOVERRIDES="dinput8.dll=n,b;zhmmodsdk.dll=n,b" %command%
-   ```
+- HITMAN World of Assassination on Steam or Epic, on Windows. The Game Pass / Microsoft Store
+  version can't be modded.
+- Both of you need the same version of HITMAN Co-op.
+- You play at a location you both own. If your friend only has some of the locations, you can play
+  those together. The mod never takes anyone somewhere they didn't start themselves.
+- It's made for game version 3.290.1. If the game updates and something co-op needs is missing,
+  co-op just stays off instead of breaking anything, until there's a fixed version.
 
-9. Optional: run `bash steamdeck/install-shortcut.sh` once to add a **Mission Control** launcher to your Linux app menu, keeping the extracted folder in place. If graphical dialogs are unavailable, use `bash steamdeck/ui-install.sh --terminal`.
+## How to install
 
-**Launching later:** Start HITMAN normally in Steam; Mission Control is for managing/installing/verifying Artur Edition. The `Launch` button in Mission Control also asks Steam to launch HITMAN. For Steam Deck, use Steam Input to map `~` to a back button and use a trackpad for the menu as needed; those control mappings have not yet been verified on physical Deck hardware.
+Both of you do this. It takes about a minute.
 
-**Windows ↔ Linux test:** On November 1, 2026, a Windows player and an Ubuntu player successfully connected through Steam and played with Artur Edition R2.18.1 / protocol 16. Steam Deck-specific behavior/performance still needs testing. Existing multiplayer synchronization limitations may affect both platforms.
+1. Close the game.
+2. Go to the [Releases page](../../releases/latest) and download `HitmanCoop-Setup-<version>.exe`.
+   That's the only file you need.
+3. Run it and click INSTALL. It finds HITMAN on Steam or Epic on its own and installs the mod loader
+   ([ZHMModSDK](https://github.com/OrfeasZ/ZHMModSDK)) and the mod. If it can't find the game, click
+   Browse and pick your HITMAN 3 folder.
+4. Start the game and press `~` (the key under Esc). CO-OP shows up at the top.
 
-See the [full Steam Deck / Linux guide](docs/steamdeck-installation.md) for verification, repair, backups, uninstall, and troubleshooting.
+Windows SmartScreen will probably say "Windows protected your PC" because the setup isn't signed by
+a company. Click More info and then Run anyway. The SHA-256 of the setup is on the Releases page if
+you want to check it.
 
-## Play together
+If you'd rather use a zip, download `HitmanCoop-<version>.zip`, extract all of it and run
+`HitmanCoop-Setup.exe` from there. To remove the mod, go to Settings > Apps > HITMAN Co-op >
+Uninstall, or run the setup again and click UNINSTALL. Your saves aren't touched either way.
 
-1. Both players start a mission at the same location.
-2. The **host** presses **~** (the key under Esc), clicks **CO-OP** at the top, and clicks **HOST**.
-   They get a join code (copied to the clipboard), or share their IP address.
-3. The **friend** presses **~**, clicks **CO-OP**, types the code under **Join a friend** and clicks
-   **JOIN**. They're taken into the host's mission.
-4. When the HUD says you're in the mission together, you're playing co-op.
+On Linux or the Steam Deck, extract `HitmanCoop-<version>-linux.tar.gz` and run
+`bash installer.sh`.
 
-The CO-OP window has tabs: **Play** (hosting, joining, teamwork buttons), **Chat**, **Mission**
-(both players' stats, your co-op record, notification history), **Settings**, **Hotkeys** and
-**About** (help, and "Copy diagnostics" for bug reports).
+## How to play together
 
-## Controls and hotkeys
+1. Both of you start a mission at the same location.
+2. The host presses `~`, opens CO-OP and clicks HOST. They get a join code (it's copied for them)
+   or they can give their IP address.
+3. The friend presses `~`, opens CO-OP, types the code under "Join a friend" and clicks JOIN. They
+   get taken into the host's mission.
+4. Once the HUD says you're in the mission together, you're good.
 
-| Action | Default key |
-| --- | --- |
-| Mark what you aim at (twice quickly: danger; again: take back) | Middle mouse button |
-| Quick messages 1-8 | Num 1 - Num 8 |
-| Regroup (go to your partner) | Num 0 |
-| Where are you? (both name tags pulse) | Num 9 |
-| Ready check / answer "ready" | Num . |
-| 3-2-1 countdown | Num + |
-| Signals: OK / wait / help | Num / / Num * / Num - |
-| Come to me, look here, show/hide HUD or radar, screenshot mode | not bound |
+The CO-OP window has tabs for Play, Chat, Mission (stats, your co-op record, notification history),
+Settings, Hotkeys and About (help and the "Copy diagnostics" button for bug reports).
 
-Number pad keys need **Num Lock** on. Change any of them in the **Hotkeys** tab: click **Change**
-and press a key (hold Ctrl, Shift or Alt for a combination). Keys used twice are shown in red.
+## Playing over the internet
 
-## Settings
+If you're not on the same Wi-Fi, I'd use Tailscale. It's free, it takes a few minutes and you don't
+have to touch your router. It puts both PCs on a little private network so the friend can join the
+host directly.
 
-Everything is in the **Settings** tab and saved in `Retail\mods\HitmanCoop.ini`:
+1. Both of you install [Tailscale](https://tailscale.com/download) and sign in.
+2. The host invites the friend from the [Tailscale admin page](https://login.tailscale.com/admin/users)
+   (Invite users), or shares their PC with them under Machines.
+3. The host starts a mission, opens CO-OP and clicks HOST. Their Tailscale address (starts with
+   `100.`) is shown in the Play tab. Send that to your friend.
+4. The friend accepts the invite, starts a mission at the same location, types that `100.x.x.x`
+   address under "Join a friend" and clicks JOIN.
 
-- **Playing together**: follow the host's mission, pause together (and whether your partner's map
-  pauses you), start together, reconnect by yourself, sounds.
-- **HUD and overlay**: HUD on/off, position, size and background; name tag, marks, radar (range,
-  size), compass, target assist (off by default), your colour, colour-blind colours, feet or metres.
-- **Marks**: how many at once (1-3) and how long they last.
-- **Notifications**: on/off, how long, and which kinds.
-- **Quick messages**: write your own eight.
-- **Connection**: co-op server, direct port, NPC sync detail, streamer mode, copying the join code.
+For Tailscale, LAN or IP connections the host has to tick "Also allow direct IP connections through
+Windows Firewall" in the setup (just run the setup again if you didn't). Join codes don't need it.
 
-## Playing over the internet with Tailscale (recommended)
+If it won't connect, check that Tailscale shows both PCs as connected, that the host ticked that
+firewall box, and that you're both at the same location.
 
-> ### **Not on the same Wi-Fi? Use Tailscale. It's free, takes five minutes, and needs no router setup.**
->
-> Tailscale puts both PCs on a small private network of their own, so the friend can join the host
-> directly, as if you were in the same house.
->
-> **Both players:**
-> 1. **Download Tailscale from [tailscale.com/download](https://tailscale.com/download) and install it.**
-> 2. **Sign in** (with Google, Microsoft, GitHub or an email address).
->
-> **The host:**
-> 3. **Invite your friend to your Tailscale network**: in the [Tailscale admin console](https://login.tailscale.com/admin/users)
->    click **Invite users** and send the invite (or **Share** your PC with them under **Machines**).
-> 4. **Start a mission, press `~`, open CO-OP and click HOST.** Your Tailscale address (it starts
->    with `100.`) is shown in the **Play** tab. Send it to your friend.
->
-> **The friend:**
-> 5. **Accept the invite, start a mission at the same location, press `~`, open CO-OP, type the
->    host's `100.x.x.x` address under Join a friend, and click JOIN.**
+Other ways:
+- Same network: the friend joins the host's local address, shown in the Play tab.
+- Join codes: you both set the same co-op server under Settings > Connection and the host gets a
+  six-letter code. There's no public server built in, but one of you can run one pretty easily (see
+  below). It only passes packets between the two games.
+- Port forwarding: the host forwards UDP port 47047 to their PC and the friend joins their public IP.
 
-> **The host should tick "Also allow direct IP connections through Windows Firewall" in the setup**
-> (run the setup again to change it). Join codes don't need it; Tailscale, LAN and IP connections do.
+Streaming? Turn on streamer mode under Settings > Connection so your codes and addresses never show
+on screen. There's also Test-Connection.exe in the zip if you want to check that two PCs can reach
+each other before starting the game.
 
-If it doesn't connect: check that Tailscale shows both PCs as **connected**, that the host ticked the
-firewall box above, and that both players are at the same location in the game.
+## Running your own co-op server
 
-### Other ways to connect
-
-- **Same network (LAN)**: the friend joins the host's local address, shown in the **Play** tab.
-- **Join code**: both players set the same **co-op server** under Settings, Connection, and the
-  host gets a six-letter code. There is no public server built in: one of you, or a friend, can run
-  one in a few minutes ([see below](#run-your-own-co-op-server)). It only passes packets between the
-  two games.
-- **Port forwarding**: the host forwards **UDP port 47047** on their router to their PC, and the
-  friend joins the host's public IP address.
-
-**Streaming?** Turn on **streamer mode** (Settings, Connection) so join codes and addresses never
-show on screen.
-
-**Test-Connection.exe** (in the zip) checks that two PCs can reach each other before you start the game.
-
-## Run your own co-op server
-
-The relay server is one Python 3 file with no dependencies, in [`server/`](server). It needs a
-machine with a public IP address (any small VPS) and UDP port 47100 open.
+The relay is one Python 3 file with no dependencies, in [`server/`](server). Put it on anything
+with a public IP (a cheap VPS is fine) and open UDP port 47100.
 
 ```sh
 # Linux, as a service that starts on boot:
@@ -264,54 +256,72 @@ docker run -d --restart=always -p 47100:47100/udp hitmancoop-relay
 python3 -I server/relay.py --port 47100
 ```
 
-Then both players type `your.server.address:47100` as the co-op server in Settings.
+Then you both put `your.server.address:47100` as the co-op server in Settings.
 
-## Troubleshooting
+## Hotkeys
 
-- **The CO-OP button doesn't show**: press **~** (the key under Esc; ^ on some keyboards).
-  If nothing appears, reinstall with the setup.
-- **"Different HITMAN Co-op versions"**: both players need the same release.
-- **Can't connect by IP**: the host's firewall or router blocks UDP 47047. Use a join code,
-  Tailscale, or forward the port.
-- **"Co-op can't run on this game version"**: the game was updated; get the matching HITMAN Co-op release.
-- **I can't see my partner's 47**: if they wear one of 47's suits, they show in civilian clothes
-  with 47's head; look for their name tag and radar dot. If there's no name tag either, restart the
-  mission together, and if it still happens, send the diagnostics and logs below from both PCs
-  (diagnostics have a "Partner's 47" line saying why they aren't shown).
-- **"You are in a different mission" / "different difficulties"**: both players start the same
-  mission on the same difficulty. (Since 0.12.0, two PCs with different CPUs no longer count as
-  different missions in New York, Whittleton Creek and other HITMAN 2 locations.)
-- **Something went wrong**: open About and click **Copy diagnostics** (it contains no IP addresses),
-  and attach `Retail\mods\HitmanCoop.log` to an issue. If the game crashed, attach
-  `Retail\mods\HitmanCoop-crash.txt` too.
+| What | Key |
+| --- | --- |
+| Mark what you're aiming at (twice fast for danger, again to remove) | Middle mouse |
+| Quick messages 1-8 | Num 1 to Num 8 |
+| Regroup | Num 0 |
+| Where are you? | Num 9 |
+| Ready check / say you're ready | Num . |
+| 3-2-1 countdown | Num + |
+| OK / wait / help | Num / , Num * , Num - |
+| Come to me, look here, hide HUD or radar, screenshot mode | not set |
+
+Num Lock has to be on. You can change any of them in the Hotkeys tab: click Change and press a key
+(hold Ctrl, Shift or Alt for a combo). If a key is used twice it shows up red.
+
+Everything else is in the Settings tab and gets saved to `Retail\mods\HitmanCoop.ini`.
+
+## If something goes wrong
+
+- No CO-OP button: press `~` (it's ^ on some keyboards). If still nothing, reinstall with the setup.
+- "Different HITMAN Co-op versions": you both need the same release.
+- Can't connect by IP: the host's firewall or router is blocking UDP 47047. Use a join code,
+  Tailscale or forward the port.
+- "Co-op can't run on this game version": the game got updated. Wait for (or grab) the matching
+  release.
+- Can't see your friend's 47: if they're in one of 47's suits they show up in normal clothes, so look
+  for the name tag or the radar dot. If there's no name tag at all, restart the mission together. If
+  it keeps happening, send me the diagnostics (they have a "Partner's 47" line that says why).
+- "You are in a different mission" or "different difficulties": start the same mission on the same
+  difficulty.
+
+To report a bug, open an [issue](../../issues) or post in #bug-reports on the Discord. In the CO-OP
+window go to About and click **Save bug report** on **both** PCs. It makes one zip with the logs, the
+flight recorder, any crash report and the diagnostics (no IP addresses in any of it). Attach both
+zips. Please don't post `HitmanCoop-crash.dmp` unless you're asked: it holds the game's memory.
+
+Still stuck? Ask in #install-help on the [Discord](https://discord.gg/rQeHdpbKUp) or post it in
+#bug-reports. Someone there has probably run into it already.
 
 ## FAQ
 
-**Does it trigger anti-cheat or get me banned?** HITMAN doesn't use an anti-cheat system like
-EasyAntiCheat or BattlEye. HITMAN Co-op runs through ZHMModSDK, the standard HITMAN mod loader, and
-doesn't change or replace any game files. It's still a mod, so read the [disclaimer](DISCLAIMER.md).
+**Can I get banned?** HITMAN doesn't have an anti-cheat like EasyAntiCheat or BattlEye. This runs
+through ZHMModSDK, which is the normal HITMAN mod loader. It changes the game in memory while it
+runs, never the game's program on disk. The only game file the setup touches is one line of the
+settings file (`Retail\thumbs.dat`, so the game reconnects by itself). You can untick that, and it's
+put back when you uninstall. It's still a mod though, so read the [disclaimer](DISCLAIMER.md).
 
-**Does it break the always-online features?** No. The mod never talks to IO Interactive's servers:
-co-op runs over its own connection (Tailscale, LAN or a join code), and your game logs in as usual.
-It also works with the game in offline mode. If you're worried about your online profile or
-leaderboards, play co-op offline.
+**Does it mess with the online stuff?** No. It never talks to IO Interactive's servers, co-op goes
+over its own connection, and your game logs in like normal. When the game starts it checks this
+GitHub page for a new version (you can turn that off under CO-OP > About). It works with the game
+offline too, so if you're worried about your profile or leaderboards, just play co-op offline.
 
-**Do I need Peacock?** No. It works with the official servers or offline. It hasn't been tested
-together with Peacock.
+**Do I need Peacock?** No. I haven't tested it together with Peacock yet either, so if you try it,
+let me know how it goes.
 
 ## What's new
 
-**0.12.1**: help for "I can't see my partner": you're told when your partner shows in civilian
-clothes, the game says what it's waiting for before showing them, and they can no longer stay
-hidden for good.
+0.14.0 is the milestone release (see [the top of this page](#0140-the-milestone)). Every version is
+in the [changelog](CHANGELOG.md).
 
-**0.12.0**: fixes for the first players' reports: New York and Whittleton Creek main missions,
-dragged and hidden bodies, crashes on restart, double takedowns being witnessed, and invisible items
-in your partner's hands. See the [changelog](CHANGELOG.md) for every version.
+## Building it yourself
 
-## Build from source
-
-See [BUILDING.md](BUILDING.md). In short (Visual Studio 2022, CMake, PowerShell):
+See [BUILDING.md](BUILDING.md). Short version (Visual Studio 2022, CMake, PowerShell):
 
 ```powershell
 ./tools/fetch-sdk.ps1
@@ -322,8 +332,8 @@ cmake --install _build --config RelWithDebInfo --prefix _build/install
 ./tools/package.ps1
 ```
 
-The engine-independent core (protocol, reliable UDP, session and sync logic) builds and tests on
-its own:
+The core part (protocol, networking, session and sync logic) doesn't need the game and builds and
+tests on its own:
 
 ```powershell
 cmake -S core -B core/build -G "Visual Studio 17 2022" -A x64
@@ -332,69 +342,54 @@ core/build/Release/coop_tests.exe
 python -I server/test_relay.py
 ```
 
+## Founding team
+
+These are the people with the Founding Team role on my Discord server. They helped me get this
+mod to where it is now, and I really appreciate them.
+
+- **Aerial Bot**: sent me a huge amount of bug reports and suggestions, was one of the first people
+  to join the Discord, and put their hand up to help moderate it too. Thank you!
+
+The Founding Team role isn't given out any more. Want to help? [Team applications](https://forms.gle/vtcxvPjS4GTSKxbG9)
+are open until 30 November 2026.
+
 ## Support the developer
 
-Hi, I'm **Jordan**, a young developer from India. 👋
+Donating is completely optional. The mod is free and it stays free, and nothing is locked behind
+paying. Please only donate if you really like what I've made and you feel it's worth it to you.
+If not, that's totally fine. Starring the repo, telling a friend or sending a bug report helps
+just as much.
 
-HITMAN Co-op is my baby. I built every part of it myself: the networking, the shared NPCs, the
-overlay, the installer, the co-op server. Countless late nights went into making two copies of a
-game that was never designed for multiplayer agree on every guard, every body and every door. I'm
-genuinely proud of what it has become, and I give it to you for free: no ads, no paywalls, no
-studio, no company. Just me.
+If you do want to:
 
-The thing is, I do this alone. There's no team to fall back on and no money coming in for it.
-Every time the game updates and something breaks, it's me sitting down to find out why and fix it.
-Every new feature is me building and testing it by hand.
-
-**If HITMAN Co-op gave you and a friend even one great evening of sneaking around together, please
-think about sending a small tip.** It doesn't have to be much: the price of a coffee means more to
-me than you'd imagine. It tells me that something I made with my own hands is out there making
-people happy, and it's what keeps me going and keeps this mod alive.
-
-### 🇮🇳 From India: UPI (instant, free)
+**UPI (India)**
 
 <p>
   <img src="docs/upi-qr.png" alt="UPI QR code" width="200"><br>
-  Scan with any UPI app (Google Pay, PhonePe, Paytm, BHIM...) or pay to:<br>
-  <b><code>jordanrodrigues021@okhdfcbank</code></b>
+  Scan it with any UPI app or pay to <b><code>jordanrodrigues021@okhdfcbank</code></b>
 </p>
 
-### 🌍 From anywhere in the world: Steam gift cards
+**Steam gift card (works from any country)**
 
-Steam converts gift cards from any country, so this works wherever you are.
+Add me on Steam with friend code `1300893237` (Friends > Add a Friend) or this
+[invite link](https://s.team/p/gtmp-bvfh/JJRCJJDJ), then send a
+[Digital Gift Card](https://store.steampowered.com/digitalgiftcards/) of any amount. Steam might
+make you wait a few days after adding me before it lets you send one.
 
-1. **Add me on Steam**: friend code **`1300893237`**
-   (Steam, then *Friends*, then *Add a Friend*), or use my
-   [quick invite link](https://s.team/p/gtmp-bvfh/JJRCJJDJ).
-2. **Send a Steam Digital Gift Card** of any amount: in the Steam store, open
-   [Digital Gift Cards](https://store.steampowered.com/digitalgiftcards/), pick an amount and choose me
-   as the recipient. Steam may ask you to be friends for a few days before it lets you send one.
+**Amazon gift card**
 
-### 🎁 Amazon gift cards
+Send an amazon.in e-gift card to
+[jordanrodrigues021@gmail.com](mailto:jordanrodrigues021@gmail.com). It has to be from amazon.in,
+cards from other Amazon stores usually don't work in India.
 
-Send an **Amazon India (amazon.in) e-gift card** by email to
-**[jordanrodrigues021@gmail.com](mailto:jordanrodrigues021@gmail.com)**: at checkout, enter that
-address as the recipient and Amazon delivers it to me. Please use **amazon.in**; gift cards from
-other Amazon stores usually can't be used in India. Add a note with your name and I'll thank you
-personally.
+If you want to help some other way, just email me or message me on Steam.
 
-### 💬 Any other way
-
-Want to support me some other way? Email me at
-**[jordanrodrigues021@gmail.com](mailto:jordanrodrigues021@gmail.com)** or message me on Steam and
-we'll work it out. I'm open to it.
-
-**Can't donate? That's completely okay.** ⭐ **Star this repository**, tell a friend, share a clip of
-your co-op run, or report a bug. Every bit of it helps a small developer more than you know.
-
-Thank you, truly. 🙏
+Thanks a lot for reading this far.
 
 ## Credits and licence
 
-- **HITMAN Co-op** is created by **Jordan Rodrigues**.
-- Built on [ZHMModSDK](https://github.com/OrfeasZ/ZHMModSDK) by OrfeasZ and contributors (GPL-3.0),
-  which also provides Dear ImGui and the Material Design icons used in the overlay.
-- [DirectX-Headers](https://github.com/microsoft/DirectX-Headers) by Microsoft (MIT).
+Made by Jordan Rodrigues, with a lot of help from the people above. Full credits are in
+[CREDITS.md](CREDITS.md). It's built on [ZHMModSDK](https://github.com/OrfeasZ/ZHMModSDK) by
+OrfeasZ and contributors.
 
-HITMAN Co-op is free software under the **GNU General Public License v3.0**: see [LICENSE](LICENSE).
-It comes with no warranty; see the [disclaimer](DISCLAIMER.md).
+Licensed under the GPL-3.0, see [LICENSE](LICENSE).

@@ -20,6 +20,7 @@ namespace {
         MuteSpeech, // in ZActor's ICharacterSpeakController::Speak: take its "no voice" path
         SkipUnit,   // at a function's entry (an actor's AI record in rcx): return at once
         NullGuard,  // a call whose result is read through: return instead when it is null
+        NullSlot,   // at a function's entry (the actor manager in rcx, a runtime id in edx): return when that slot has no actor
     };
 
     // Each place is found by its code pattern (IDA style, ?? any byte), wherever a game build has
@@ -56,6 +57,13 @@ namespace {
         // that (crash at +0x322f55, 3.280.0). cmp byte ptr [rcx+..],1; jne ret; lea rcx,[rax+..];
         // mov rax,[rcx]; call [rax+..]; xor edx,edx; mov rcx,[rax+..]; add rsp,28h; jmp .. (+0x322f3d)
         { "perceptibility guard", "80 79 ?? 01 75 ?? 48 8D 88 ?? ?? 00 00 48 8B 01 FF 90 ?? ?? 00 00 33 D2 48 8B 48 ?? 48 83 C4 28 E9", 37, Kind::NullGuard },
+        // The actor manager filling its per-actor tables for one runtime id (called as an actor
+        // comes back to life): mov [rsp+8],rbx; mov [rsp+10h],rsi; mov [rsp+18h],rdi; push rbp;
+        // push r12..r15; mov rbp,rsp; sub rsp,80h; movaps xmm0,[..]; lea rsi,[image]; movsxd
+        // r14,edx. It reads through the manager's actor for that id, which a restart has taken
+        // out already: a guest's game went down there when the host's mission ended and the
+        // guest's restarted for it (3.290.1, +0x16ab68 reading 0x28).
+        { "restart guard 4", "48 89 5C 24 08 48 89 74 24 10 48 89 7C 24 18 55 41 54 41 55 41 56 41 57 48 8B EC 48 81 EC 80 00 00 00 0F 28 05 ?? ?? ?? ?? 48 8D 35 ?? ?? ?? ?? 4C 63 F2 48 8D BE", 15, Kind::NullSlot },
     };
 
     // Where the reasoning's per-actor AI records are: the actor manager passes their table to the
@@ -98,8 +106,11 @@ namespace {
     int g_SkipSpare = 1;
     std::mutex g_SkipMutex;
     void* g_StandInUnit = nullptr;
-    std::unordered_set<void*> g_PuppetActors;
+    // Each puppet with its AI record, found when it was made one: the list is rebuilt later (a
+    // restart tears actors down meanwhile) without reading any actor again.
+    std::unordered_map<void*, void*> g_PuppetActors;
     std::atomic<uint32_t> g_SkippedThinks = 0;
+    std::atomic<uint32_t> g_EmptySlots = 0;   // restart guard 4: calls for an id with no actor, skipped
     std::atomic<uint32_t> g_MutedLines = 0;   // counted by the stub
     std::atomic<uint32_t> g_AllLines = 0;     // every actor's, for comparison
     std::atomic<uint32_t> g_Calmed = 0;
@@ -265,7 +276,10 @@ namespace {
 
         int32_t s_Id = -1;
         std::memcpy(&s_Id, static_cast<uint8_t*>(p_Actor) + g_RuntimeIdOffset, sizeof(s_Id));
-        return s_Id >= 0 && s_Id < 500 ? reinterpret_cast<void*>(g_Units + static_cast<size_t>(s_Id) * g_UnitSize) : nullptr;
+        // Only an address to compare with (the stub never reads through it), so any runtime id a
+        // mission hands out is fine: 500 left the NPCs of crowded missions running their own AI
+        // under the partner's stream.
+        return s_Id >= 0 && s_Id < 8192 ? reinterpret_cast<void*>(g_Units + static_cast<size_t>(s_Id) * g_UnitSize) : nullptr;
     }
 
     // Under g_SkipMutex.
@@ -276,8 +290,8 @@ namespace {
         if (g_StandInUnit)
             s_List[n++] = g_StandInUnit;
 
-        for (void* s_Actor : g_PuppetActors)
-            if (void* s_Unit = UnitOf(s_Actor); s_Unit && n < c_MaxSkipped)
+        for (const auto& [s_Actor, s_Unit] : g_PuppetActors)
+            if (s_Unit && n < c_MaxSkipped)
                 s_List[n++] = s_Unit;
 
         s_List[n] = nullptr;
@@ -287,10 +301,62 @@ namespace {
 }
 
 void CrashGuards::SetPuppet(void* p_Actor, bool p_Puppet) {
+    if (!p_Actor)
+        return;
+
+    // Read before the lock: the actor is alive now (the caller just found it in the scene).
+    void* s_Unit = p_Puppet ? UnitOf(p_Actor) : nullptr;
     std::lock_guard s_Lock(g_SkipMutex);
 
-    if (p_Puppet ? g_PuppetActors.insert(p_Actor).second : g_PuppetActors.erase(p_Actor) > 0)
+    if (p_Puppet ? g_PuppetActors.emplace(p_Actor, s_Unit).second : g_PuppetActors.erase(p_Actor) > 0)
         RebuildSkipList();
+}
+
+size_t CrashGuards::RefreshPuppetUnits(bool (*p_Alive)(void* p_Context, void* p_Actor), void* p_Context) {
+    std::vector<void*> s_Actors;
+    {
+        std::lock_guard s_Lock(g_SkipMutex);
+        s_Actors.reserve(g_PuppetActors.size());
+
+        for (const auto& [s_Actor, s_Unit] : g_PuppetActors)
+            s_Actors.push_back(s_Actor);
+    }
+
+    // Read outside the lock, only from actors the caller just found in the scene.
+    std::vector<std::pair<void*, void*>> s_Fresh;
+    s_Fresh.reserve(s_Actors.size());
+
+    for (void* s_Actor : s_Actors)
+        s_Fresh.emplace_back(s_Actor, p_Alive(p_Context, s_Actor) ? UnitOf(s_Actor) : reinterpret_cast<void*>(-1));
+
+    std::lock_guard s_Lock(g_SkipMutex);
+    size_t s_Changed = 0;
+
+    for (const auto& [s_Actor, s_Unit] : s_Fresh) {
+        const auto s_It = g_PuppetActors.find(s_Actor);
+
+        if (s_It == g_PuppetActors.end())
+            continue;
+
+        if (s_Unit == reinterpret_cast<void*>(-1)) {
+            g_PuppetActors.erase(s_It);
+            ++s_Changed;
+        }
+        else if (s_It->second != s_Unit) {
+            s_It->second = s_Unit;
+            ++s_Changed;
+        }
+    }
+
+    if (s_Changed)
+        RebuildSkipList();
+
+    return s_Changed;
+}
+
+bool CrashGuards::IsPuppet(void* p_Actor) {
+    std::lock_guard s_Lock(g_SkipMutex);
+    return g_PuppetActors.contains(p_Actor);
 }
 
 void CrashGuards::ClearPuppets() {
@@ -362,6 +428,8 @@ int32_t CrashGuards::AlertFloor(const void* p_Knowledge) {
 }
 
 uint32_t CrashGuards::SkippedThinks() { return g_SkippedThinks; }
+
+uint32_t CrashGuards::EmptySlots() { return g_EmptySlots; }
 
 bool CrashGuards::IsStandInKnowledge(const void* p_Knowledge) {
     return p_Knowledge && p_Knowledge == g_Knowledge.load(std::memory_order_relaxed);
@@ -549,6 +617,19 @@ int CrashGuards::Install() {
             Emit64(s_Stub, reinterpret_cast<uint64_t>(&g_SkippedThinks));
             Emit(s_Stub, { 0xF0, 0xFF, 0x00 }); // lock inc dword ptr [rax]
             Emit(s_Stub, { 0xC3 });             // ret
+            // original:
+            s_Stub.insert(s_Stub.end(), s_Patch.original.begin(), s_Patch.original.end());
+            EmitJump(s_Stub, s_Resume);
+        }
+        else if (s_Patch.kind == Kind::NullSlot) {
+            Emit(s_Stub, { 0x48, 0x63, 0xC2 });                   // movsxd rax,edx
+            Emit(s_Stub, { 0x48, 0x01, 0xC0 });                   // add rax,rax
+            Emit(s_Stub, { 0x48, 0x83, 0x7C, 0xC1, 0x10, 0x00 }); // cmp qword ptr [rcx+rax*8+10h],0
+            Emit(s_Stub, { 0x75, 0x0E });                         // jne original (10 + 3 + 1 bytes on)
+            Emit(s_Stub, { 0x48, 0xB8 });                         // mov rax,&g_EmptySlots
+            Emit64(s_Stub, reinterpret_cast<uint64_t>(&g_EmptySlots));
+            Emit(s_Stub, { 0xF0, 0xFF, 0x00 });                   // lock inc dword ptr [rax]
+            Emit(s_Stub, { 0xC3 });                               // ret
             // original:
             s_Stub.insert(s_Stub.end(), s_Patch.original.begin(), s_Patch.original.end());
             EmitJump(s_Stub, s_Resume);

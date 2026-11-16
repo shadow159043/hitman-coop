@@ -3,7 +3,170 @@
 All notable changes to HITMAN Co-op, created by **Jordan Rodrigues**.
 Both players always need the same version.
 
+## 0.14.0 (2026-11-12): the milestone
+
+Both players need 0.14.0 (network protocol 18: it doesn't connect to 0.13.x). If you have 0.13.2 it
+updates itself the next time you start the game. Run the new setup instead if you want the game
+itself tuned for co-op (see below).
+
+0.14.0 has everything from the 0.13.90 to 0.13.95 betas. Its full list is in
+[installer/WHATSNEW.txt](installer/WHATSNEW.txt), and the short version is:
+
+- a new setup that does everything itself, sets up Tailscale, shows up in Settings > Apps, and no
+  longer trips antivirus;
+- bodies your partner drags follow them on your screen;
+- bodies and dropped items lie in the same place for both of you;
+- NPCs animated the same in both games;
+- a proper pause screen and signed updates;
+- the "signed in on another computer" causes checked and reported;
+- one download for game 3.290 and 3.280, and a Linux / Steam Deck installer.
+
+New in 0.14.0:
+
+**Logs: a new way of finding bugs**
+- **A flight recorder.** The mod keeps the last several thousand detailed events in memory at any log
+  level: NPC hand-overs and why, every game event, scripted mission steps, stand-in items, and the
+  NPCs around you every 20 s. It goes into every crash and every bug report as
+  `HitmanCoop-blackbox.txt`.
+- **Much more detailed crash reports:**
+  - the mod's functions by name (from `HitmanCoop.sym`, shipped beside the DLL);
+  - the registers and the bytes of the instruction that failed;
+  - what the mod was doing at that moment;
+  - the last 40 events;
+  - a crash dump kept on the player's PC.
+- **Caught faults on record:** faults the mod catches and survives go to `HitmanCoop-crash-caught.txt`.
+- **Bug reports** include the flight recorder and the mod loader's log.
+- **Developer tools** in `tools/`: `symbolize.py` (crash addresses to function names),
+  `gamedis.py` (the game's code around an address), `check-patterns.py` (every game patch against a
+  game build), `gamecfg.py` (the game's encrypted settings file).
+
+**Fixed**
+- **The partner's game crashed when you drew a rifle** or another two-handed weapon. The game kept
+  pointing at the item the mod had just taken from the stand-in. That's now cleared, and a fault
+  while the game attaches an item is caught.
+- **The partner's game crashed when you quit to the menu.** It was taken for a mission restart.
+  Leaving is no longer a restart, a restart waits for the stand-in to settle, and a new guard covers
+  the place in the game that went down.
+- **NPCs walking one way and facing another** on one player's screen. Every NPC the other game runs
+  is now pinned each frame to exactly how it stands there (the skeleton is corrected in the pose
+  update).
+- **Guards stuck with a "?"** after hearing something. NPCs near a thrown item, and NPCs your own game
+  starts something with (going to look, spotting you, getting sick), are run by your game until
+  they're done. Agitated, searching or alarmed NPCs no longer change hands.
+- **Missions getting stuck** (Hawke's Bay: the target ignoring 47 after the NDA). Scripted
+  interactions one player does now fire in the other game too. Doors, items, disguises and bodies
+  keep their own sync. `[sync] scripted_actions = false` turns this off.
+
+**The game itself**
+- **The setup tunes the game for co-op.** It edits one line of `Retail\thumbs.dat` (the game's
+  encrypted settings file), `OnlineDisableAutoReconnect=0`, so a dropped connection to IOI's servers
+  reconnects by itself instead of stopping the mission. The original file is kept beside it, there's
+  a tick box for it, uninstalling puts it back, and the mod makes the change again after a game
+  update.
+
+## 0.13.2 (2026-10-31)
+
+If you have 0.13.0 or 0.13.1, it updates itself the next time you start the game. Plays with
+0.13.0 and 0.13.1 (same network protocol).
+
+**Fixed**
+- **Bodies turned invisible by themselves** after a short while, though nobody had hidden them, and
+  could still be dragged. A body that slid or settled on its own (each game's physics does that its
+  own way) was taken for one your partner had moved, and hidden in their game. Now only a body a
+  player actually drags, dumps or hides is shared.
+- **Updates didn't download on some internet connections.** GitHub sends release downloads to a
+  file server that, on some connections, has an address Windows can't reach, and Windows kept
+  trying that one. The mod now gets its updates from the address GitHub serves the repository's
+  files from, and tries the release only if that fails. If your 0.13.0 or 0.13.1 doesn't update by
+  itself after a couple of game starts, install 0.13.2 by hand once.
+
+## 0.13.1 (2026-10-31)
+
+Fixes from the first reports on 0.13.0. If you have 0.13.0, it updates itself the next time you
+start the game. Plays with 0.13.0 (same network protocol).
+
+**Fixed**
+- **Stripped bodies kept their clothes on your partner's screen.** The game leaves a body's outfit
+  as it is when 47 takes it, and sets it again "nude", so the mod never saw a change. It now
+  catches the game's own call and does the same in your partner's game.
+- **A guard arresting you could freeze halfway, and the game crashed.** When you stand next to your
+  partner, the host's game runs the NPCs around you both. A guard arresting, hunting or fighting
+  you is now run by your own game, wherever you stand, until it calms down.
+- **A body your partner put in a container could still be dragged in your game**, with its
+  knock-out stars over it, and guards noticed it while it was dragged. It can't be dragged or
+  grabbed any more, and the stars are gone.
+- **Items your partner took from a table stayed there in your game** (like the ones at the start
+  of Freeform Training). Those are drawn another way, which is now hidden too.
+
+**Known limits**
+- A body your partner drags still disappears in your game instead of moving (the game doesn't let
+  a mod move a ragdoll body).
+- A crash when leaving a mission was reported, without its crash file, and couldn't be reproduced
+  here. If it happens to you, please send `Retail\mods\HitmanCoop-crash.txt`.
+- Tested on game version 3.290.1 in Paris with the test partner; the arrest fix by the tests of
+  the mod's core, as it needs two real players.
+
+## 0.13.0 (2026-10-31)
+
+Game version 3.290.1 moved things around inside the game, and a lot of the mod quietly stopped
+working on it. This version is made for 3.290.1. **Both players need 0.13.0** (it can't play with
+0.12.x).
+
+**Fixed**
+- **Items weren't shared at all**: picking up, dropping, throwing, and what your partner holds. The
+  game update moved its list of items, so the mod saw none. It now finds the list where it is.
+- **Outfit changes didn't show on your partner's screen**, and your partner never got your outfit.
+  The mod loader HITMAN Co-op comes with, ZHMModSDK, is updated from 4.1.1 to 4.2.1, which knows
+  where 3.290.1 keeps 47's outfit.
+- **Taking a disguise off a body didn't show on your partner's screen.** The body now changes
+  clothes on both screens.
+- **Bodies your partner hid could still be found by guards in your game.** They are now also hidden
+  from the AI, not only from sight.
+
+**New**
+- **HITMAN Co-op updates itself.** When the game starts, it checks GitHub for a new version and
+  downloads only the files that changed, each checked by its SHA-256. The new version is used the
+  next time you start the game, what's new is shown on screen, and the old files are deleted. Turn
+  it off under CO-OP > About. (0.12.x can't update itself, so this one time, install 0.13.0 by hand.)
+
+**Changed**
+- Network protocol 13.
+
+**Known limits**
+- Tested on game version 3.290.1 in Paris with the test partner: items, outfits, stripped and hidden
+  bodies, and the self-update end to end. Whether guards now ignore a hidden body, the item in your
+  partner's hand while they really play, and dragged bodies couldn't be tried without a second
+  player. A body your partner drags still disappears in your game instead of moving (the game
+  doesn't let a mod move a ragdoll body).
+
+## 0.12.2 (2026-10-31)
+
+For players who were connected, with kills, marks and NPCs shared, but couldn't see each other's
+47 at all. Plays with 0.12.0 and 0.12.1, but please update both PCs.
+
+**Fixed**
+- **Your partner's 47 didn't show at all, on either PC.** Before showing your partner, the mod
+  needs to know their outfit. When it couldn't name the outfit 47 wears (likely with some unlocked
+  or DLC suits), no outfit was ever sent, and your partner was never shown, on both PCs, without a
+  word. Outfits are now also named by the outfit's own id, or the one it's based on, and if neither
+  outfit is known after 3 seconds your partner is shown anyway in civilian clothes (with 47's
+  head), with a message saying so.
+- **The 0.12.1 download contained 0.12.0.** The mod inside it was the old one, so it said 0.12.0
+  and none of the 0.12.1 changes were there. 0.12.2 contains them, and the release build now checks
+  that the files it packs are the version being released.
+
+**Changed**
+- The log names an outfit that can't be named, and how one was found, to help with bug reports.
+
+**Known limits**
+- Tested on game version 3.290.1 in Paris and the ICA Facility with the test partner, including a
+  partner whose outfit isn't known. The players' suits themselves couldn't be tried here: if you
+  still can't see your partner, please send About > Copy diagnostics and `HitmanCoop.log` from
+  both PCs.
+
 ## 0.12.1 (2026-10-30)
+
+*The 0.12.1 download contained the 0.12.0 mod by mistake; these changes first shipped in 0.12.2.*
 
 For a player who couldn't see their partner's 47 at all. Plays with 0.12.0 (same network protocol),
 but updating both is best.
