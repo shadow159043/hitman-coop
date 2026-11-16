@@ -823,7 +823,9 @@ void Session::HandleMessage(const Message& p_Msg, double p_Now) {
         case MsgType::Skeleton: {
             MsgSkeleton s_Skeleton;
 
-            if (Decode(p_Msg.payload, s_Skeleton))
+            // A stale reliable skeleton packet must not rematch a stand-in rig
+            // while the scene is unloading. The sender re-sends after resync.
+            if (IsSynced() && Decode(p_Msg.payload, s_Skeleton))
                 m_World.SetRemoteSkeleton(s_Skeleton.parents);
 
             break;

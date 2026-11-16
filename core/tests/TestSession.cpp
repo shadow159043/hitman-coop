@@ -1701,6 +1701,27 @@ TEST(Session_ConnectionEventsWorkOutsideMissions) {
     CHECK(d.clientWorld.peerEvents[1] == "Coop_ReadyCheck:");
 }
 
+TEST(Session_SkeletonDoesNotResetRigDuringReload) {
+    Duo d(141);
+    d.HostLoads(c_Miami, 0);
+    d.ClientLoads(c_Miami, 0, 0.f);
+    d.hostWorld.skeleton = { -1, 0 };
+    d.Start();
+    REQUIRE(d.StepUntilSynced(2.0));
+    d.Step(0.5);
+    REQUIRE(d.clientWorld.remoteSkeletons > 0);
+    const int s_Before = d.clientWorld.remoteSkeletons;
+
+    d.hostWorld.skeleton = { -1, 0, 1 }; // newer rig packet queued by the host
+    d.t += 0.5;
+    d.net->SetTime(d.t);
+    d.host.Tick(d.t, static_cast<float>(d.dt));
+    d.clientWorld.UnloadScene();
+    d.client.OnLocalSceneUnloaded();
+    d.Step(0.5);
+    CHECK(d.clientWorld.remoteSkeletons == s_Before);
+}
+
 TEST(Session_ItemChangesReachPeer) {
     Duo d(30);
     d.HostLoads(c_Miami, 0);
