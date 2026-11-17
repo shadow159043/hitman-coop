@@ -5,6 +5,7 @@
 #include "SimNetwork.h"
 #include "TestFramework.h"
 #include "coop/Session.h"
+#include "coop/Lobby.h"
 
 using namespace coop;
 
@@ -1943,4 +1944,118 @@ TEST(Socket_TailscaleAddressIsFromTheAdapters) {
         REQUIRE(ResolveEndpoint(s_Address, kDefaultPort, e, err));
         CHECK((e.ip & 0xFFC00000u) == 0x64400000u);
     }
+}
+
+ 
+TEST(Lobby_ObservedMissionIdentityAndReadiness) {
+    LobbyModel host;
+    CHECK(LobbyModel::MissionKey(c_Miami) == LobbyModel::MissionKey(c_Miami));
+    CHECK(LobbyModel::MissionKey(c_Miami) != LobbyModel::MissionKey(c_Paris));
+    CHECK(LobbyModel::MissionKey(c_Paris) != LobbyModel::MissionKey(c_ParisOther));
+    CHECK(LobbyModel::ValidKey(LobbyModel::MissionKey(c_Miami)));
+    CHECK(host.Observe(c_Miami));
+    const std::string miami = LobbyModel::MissionKey(c_Miami);
+    CHECK(!host.Observe(c_Miami)); // duplicate observed scene
+    CHECK(!host.Vote(false, miami)); // peer did not prove they could visit it
+    CHECK(!host.PeerObserved("0123456789abcdef")); // arbitrary wire key rejected
+    CHECK(host.PeerObserved(miami));
+    CHECK(host.Vote(false, miami));
+    CHECK(host.Vote(true, miami));
+    CHECK(host.State().selected == miami);
+    CHECK(host.State().phase == LobbyPhase::Ready);
+    CHECK(!host.Begin(10.0, true)); // neither ready
+    CHECK(host.Ready(false, true));
+    CHECK(host.Ready(true, true));
+    CHECK(!host.Begin(10.0, false)); // mismatched versions
+    CHECK(host.Begin(10.0, true));
+    const uint32_t launch = host.State().launchId;
+    CHECK(launch != 0);
+    CHECK(!host.Begin(10.1, true)); // no double launch
+    CHECK(!host.Ack(launch + 1, 10.1)); // stale launch
+    CHECK(host.Ack(launch, 10.1));
+    CHECK(!host.Loaded(true, launch, c_Paris)); // wrong mission must not start
+    CHECK(host.Loaded(false, launch, c_Miami));
+    CHECK(host.State().phase == LobbyPhase::Loading);
+    CHECK(!host.Loaded(false, launch, c_Miami)); // duplicate ack
+    CHECK(host.Loaded(true, launch, c_Miami));
+    CHECK(host.State().phase == LobbyPhase::Synced);
+    CHECK(!host.Loaded(true, launch, c_Miami));
+    host.Reset();
+    CHECK(host.State().phase == LobbyPhase::Voting);
+    CHECK(!host.State().hostReady && !host.State().peerReady);
+    CHECK(host.State().launchId == 0);
+}
+
+TEST(Lobby_VotesHostTieResolutionAndMissionChangesResetReady) {
+    LobbyModel host;
+    const std::string miami = LobbyModel::MissionKey(c_Miami);
+    const std::string paris = LobbyModel::MissionKey(c_Paris);
+    REQUIRE(host.Observe(c_Miami));
+    REQUIRE(host.Observe(c_Paris));
+    REQUIRE(host.PeerObserved(miami));
+    REQUIRE(host.PeerObserved(paris));
+    CHECK(host.Vote(false, miami));
+    CHECK(host.Vote(true, paris));
+    CHECK(host.State().selected.empty()); // 1-1 tie
+    CHECK(!host.ResolveTie("0000000000000000")); // cannot inject candidate
+    CHECK(host.ResolveTie(paris));
+    CHECK(host.State().selected == paris);
+    CHECK(host.Ready(false, true));
+    CHECK(host.Ready(true, true));
+    CHECK(host.Vote(true, miami)); // change vote before launch
+    CHECK(host.State().selected == miami);
+    CHECK(!host.State().hostReady && !host.State().peerReady);
+    CHECK(host.Ready(false, true));
+    CHECK(host.Ready(true, true));
+    CHECK(host.Begin(1.0, true));
+    CHECK(!host.Vote(false, paris)); // no silent map change after readiness
+    CHECK(!host.ResolveTie(paris));
+    CHECK(!host.Ready(false, false)); // locked
+}
+
+TEST(Lobby_TimeoutDisconnectAndRejoinRequireNewHandshake) {
+    LobbyModel host;
+    const std::string key = LobbyModel::MissionKey(c_Miami);
+    REQUIRE(host.Observe(c_Miami));
+    REQUIRE(host.PeerObserved(key));
+    REQUIRE(host.Vote(false, key));
+    REQUIRE(host.Vote(true, key));
+    REQUIRE(host.Ready(false, true));
+    REQUIRE(host.Ready(true, true));
+    REQUIRE(host.Begin(0.0, true));
+    CHECK(!host.Timeout(19.0));
+    CHECK(host.Timeout(21.0));
+    CHECK(host.State().phase == LobbyPhase::Failed);
+    CHECK(!host.Ack(host.State().launchId, 21.0));
+    host.Reset(true);
+    CHECK(host.State().phase == LobbyPhase::Voting);
+    CHECK(!host.Vote(true, key)); // new guest must re-advertise mission after reconnect
+    CHECK(host.PeerObserved(key));
+    CHECK(host.Vote(false, key));
+    CHECK(host.Vote(true, key));
+    CHECK(host.Ready(false, true));
+    CHECK(host.Ready(true, true));
+    CHECK(host.Begin(40.0, true));
+    const auto launch = host.State().launchId;
+    CHECK(host.Ack(launch, 40.0));
+    CHECK(host.Loaded(false, launch, c_Miami));
+    CHECK(!host.Timeout(190.0)); // long but before 180 s post-ack deadline
+    CHECK(host.Timeout(221.0));
+    CHECK(host.State().phase == LobbyPhase::Failed);
+}
+
+TEST(Lobby_ClientRejectsMalformedOrOlderHostState) {
+    LobbyModel local;
+    LobbySnapshot valid;
+    valid.revision = 4;
+    valid.options.push_back({ LobbyModel::MissionKey(c_Paris), "Paris / peacock", true });
+    CHECK(local.ApplyHostState(valid));
+    LobbySnapshot stale = valid;
+    stale.revision = 3;
+    CHECK(!local.ApplyHostState(stale));
+    LobbySnapshot spoofed = valid;
+    spoofed.revision = 5;
+    spoofed.options.push_back({ "../HITMAN3.exe", "unsafe", true });
+    CHECK(!local.ApplyHostState(spoofed));
+    CHECK(local.State().revision == 4);
 }
