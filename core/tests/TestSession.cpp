@@ -462,6 +462,327 @@ TEST(Session_NpcsComeBackWhenThePlayersMeet) {
     CHECK(d.clientWorld.puppets.size() == d.clientWorld.npcs.size());
 }
 
+// An NPC the host runs but doesn't have in its mission (pooled NPCs come in at different times in
+// each game): the client's copy keeps its own AI instead of standing frozen as a puppet.
+TEST(Session_NpcNobodySendsKeepsItsOwnAi) {
+    Duo d(43);
+    d.HostLoads(c_Miami, 10);
+    d.ClientLoads(c_Miami, 10, 0.f);
+    d.hostWorld.player.pos = FakeWorld::Center(0x1000);
+    d.clientWorld.player.pos = d.hostWorld.player.pos + Vec3 { 1.f, 0.f, 0.f };
+    d.hostWorld.npcs.erase(0x1005);
+    d.Start();
+    REQUIRE(d.StepUntilSynced(2.0));
+    d.Step(3.0);
+    CHECK(d.clientWorld.puppets.count(0x1001));
+    CHECK(!d.clientWorld.puppets.count(0x1005));
+
+    // It walks on by itself.
+    const Vec3 s_Before = d.clientWorld.npcs[0x1005].xf.pos;
+    d.Step(1.0);
+    CHECK(Distance(s_Before, d.clientWorld.npcs[0x1005].xf.pos) > 0.5f);
+
+    // The host's game brings it in: from then on it is the host's puppet.
+    d.hostWorld.npcs[0x1005] = d.clientWorld.npcs[0x1005];
+    d.Step(2.0);
+    CHECK(d.clientWorld.puppets.count(0x1005));
+
+    // It leaves the host's mission again: its own AI once its positions have stopped coming.
+    d.hostWorld.npcs.erase(0x1005);
+    d.Step(6.5);
+    CHECK(!d.clientWorld.puppets.count(0x1005));
+}
+
+static bool HasLogLine(const FakeWorld& w, const std::string& needle);
+
+// A puppet the game won't let us place (seen in game: one went 30 m off while placed every frame)
+// runs its own AI here a while, and is tried as a puppet again after.
+TEST(Session_PuppetThatWontStayPutRunsItsOwnAi) {
+    Duo d(44);
+    d.HostLoads(c_Miami, 3);
+    d.ClientLoads(c_Miami, 3, 0.f);
+    d.hostWorld.player.pos = FakeWorld::Center(0x1000);
+    d.clientWorld.player.pos = d.hostWorld.player.pos + Vec3 { 1.f, 0.f, 0.f };
+    d.clientWorld.unplaceable.insert(0x1001);
+    d.Start();
+    REQUIRE(d.StepUntilSynced(2.0));
+    d.Step(1.0);
+    CHECK(d.clientWorld.puppets.count(0x1000));
+    d.Step(8.0);
+    CHECK(HasLogLine(d.clientWorld, "1001 doesn't stay where it is put"));
+    CHECK(!d.clientWorld.puppets.count(0x1001));
+    CHECK(d.clientWorld.puppets.count(0x1000)); // the others stay puppets
+
+    // A while later it is tried again (here it still won't, so it goes back to its own AI).
+    d.clientWorld.unplaceable.clear();
+    d.Step(22.0);
+    CHECK(d.clientWorld.puppets.count(0x1001));
+}
+
+// Players crossing back and forth by an NPC: it changes hands at most once in ownerHoldTime (each
+// change wakes an AI with old orders: flipping NPCs slid and walked through walls).
+TEST(Session_NpcOwnershipHoldsAWhile) {
+    Duo d(47);
+    d.HostLoads(c_Miami, 10);
+    d.ClientLoads(c_Miami, 10, 0.f);
+    d.hostWorld.player.pos = FakeWorld::Center(0x1000);
+    d.clientWorld.player.pos = FakeWorld::Center(0x1009);
+    d.Start();
+    REQUIRE(d.StepUntilSynced(2.0));
+    d.Step(6.0);
+    REQUIRE(!d.hostWorld.puppets.count(0x1000));
+
+    int s_Flips = 0;
+    bool s_Was = false;
+    d.onStep = [&](double) {
+        const bool s_Is = d.hostWorld.puppets.count(0x1000) != 0;
+        s_Flips += s_Is != s_Was ? 1 : 0;
+        s_Was = s_Is;
+    };
+
+    for (int i = 0; i < 4; ++i) {
+        std::swap(d.hostWorld.player.pos, d.clientWorld.player.pos);
+        d.Step(1.0);
+    }
+
+    d.onStep = nullptr;
+    CHECK_MSG(s_Flips == 1, "%d changes in 4 s", s_Flips);
+
+    // The players are back where they started: once the hold is over, it is the host's again.
+    d.Step(6.0);
+    CHECK(!d.hostWorld.puppets.count(0x1000));
+}
+
+static bool HasLogLine(const FakeWorld& w, const std::string& needle) {
+    for (const auto& s_Line : w.logLines)
+        if (s_Line.find(needle) != std::string::npos)
+            return true;
+
+    return false;
+}
+
+// The sync check: each game sends where it has every NPC; the other says how far apart they are,
+// and why for the worst ones. All in the same place when sharing works.
+TEST(Session_SyncCheckMeasuresHowFarApartTheGamesAre) {
+    Duo d(53);
+    d.HostLoads(c_Miami, 10);
+    d.ClientLoads(c_Miami, 10, 0.f);
+    d.hostWorld.player.pos = FakeWorld::Center(0x1000);
+    d.clientWorld.player.pos = d.hostWorld.player.pos + Vec3 { 1.f, 0.f, 0.f };
+    d.Start();
+    REQUIRE(d.StepUntilSynced(2.0));
+    d.Step(16.0);
+
+    auto s_Report = d.host.Status().npcCheck;
+    REQUIRE(s_Report.at > 0.0);
+    CHECK_MSG(s_Report.compared == 10 && s_Report.same == 10, "%zu compared, %zu same", s_Report.compared, s_Report.same);
+    CHECK(d.client.Status().npcCheck.same == 10);
+
+    // A puppet on the client that won't stay where it is put walks off: the host's check finds it
+    // out of place, and says the host runs it and it is a puppet on the client.
+    d.clientWorld.unplaceable.insert(0x1003);
+    d.clientWorld.npcs[0x1003].xf.pos = d.clientWorld.npcs[0x1003].xf.pos + Vec3 { 30.f, 0.f, 0.f };
+    // And an NPC only the host's game has.
+    d.clientWorld.npcs.erase(0x1007);
+    d.Step(11.0);
+
+    // (The client soon gives that puppet its own AI back, see Session_PuppetThatWontStayPutRunsItsOwnAi:
+    // the check then names it as run by the client's own AI.)
+    s_Report = d.host.Status().npcCheck;
+    CHECK_MSG(s_Report.onlyOurs == 1 && s_Report.same == 8, "%zu same, %zu only the host's", s_Report.same, s_Report.onlyOurs);
+    CHECK_MSG(s_Report.worst.find("0000000000001003") != std::string::npos && s_Report.worst.find("their AI runs it") != std::string::npos,
+        "worst: %s", s_Report.worst.c_str());
+    CHECK(HasLogLine(d.clientWorld, "1003 doesn't stay where it is put"));
+    CHECK(HasLogLine(d.hostWorld, "sync check: 9 NPCs in both games"));
+}
+
+// The 10-second health line, and nothing at all when the log is quiet.
+TEST(Session_LogsItsHealthEveryTenSeconds) {
+    Duo d(59);
+    d.HostLoads(c_Miami, 10);
+    d.ClientLoads(c_Miami, 10, 0.f);
+    d.hostWorld.player.pos = FakeWorld::Center(0x1000);
+    d.clientWorld.player.pos = FakeWorld::Center(0x1009);
+    d.clientWorld.logLevel = LogLevel::Warn;
+    d.Start();
+    REQUIRE(d.StepUntilSynced(2.0));
+    d.Step(12.0);
+
+    CHECK(HasLogLine(d.hostWorld, "INFO net: hosting"));
+    CHECK(HasLogLine(d.hostWorld, "joined from"));
+    CHECK(HasLogLine(d.hostWorld, "INFO sync: together in the mission"));
+    CHECK(HasLogLine(d.hostWorld, "INFO stats: together | link rtt"));
+    CHECK(HasLogLine(d.hostWorld, "changed hands"));
+    CHECK(HasLogLine(d.hostWorld, "DEBUG npc:") && HasLogLine(d.hostWorld, "to the client"));
+    CHECK_MSG(d.clientWorld.logLines.empty(), "%zu lines on a quiet log", d.clientWorld.logLines.size());
+
+    d.client.Leave("bye", d.t);
+    d.Step(1.0);
+    CHECK(HasLogLine(d.hostWorld, "partner gone:") && HasLogLine(d.hostWorld, "rtt "));
+}
+
+TEST(Session_NpcChasingTheClientGoesToTheClient) {
+    Duo d(39);
+    d.HostLoads(c_Miami, 10);
+    d.ClientLoads(c_Miami, 10, 0.f);
+    d.hostWorld.player.pos = FakeWorld::Center(0x1000);
+    d.clientWorld.player.pos = d.hostWorld.player.pos + Vec3 { 1.f, 0.f, 0.f };
+    d.Start();
+    REQUIRE(d.StepUntilSynced(2.0));
+    d.Step(3.0);
+
+    // Standing together: the host runs everything, the client plays puppets.
+    REQUIRE(d.hostWorld.puppets.empty());
+    REQUIRE(d.clientWorld.puppets.count(0x1001));
+
+    // A guard arrests the client's 47 in the client's game: the client runs it from then on.
+    d.clientWorld.alerts = { { 0x1001, 7 } };
+    d.Step(2.0);
+    CHECK(d.hostWorld.puppets.count(0x1001) && !d.clientWorld.puppets.count(0x1001));
+    CHECK_MSG(d.hostWorld.puppets.size() == 1, "%zu puppets on the host", d.hostWorld.puppets.size());
+
+    // Only looking around (alerted, not after them): no change for the others.
+    d.clientWorld.alerts = { { 0x1001, 7 }, { 0x1002, 4 } };
+    d.Step(2.0);
+    CHECK(!d.hostWorld.puppets.count(0x1002));
+
+    // It calms down: with the players together, it goes back to the host.
+    d.clientWorld.alerts.clear();
+    d.Step(5.0);
+    CHECK(!d.hostWorld.puppets.count(0x1001) && d.clientWorld.puppets.count(0x1001));
+}
+
+// A fist fight (or a takedown) the client starts on an NPC the host runs: the client's own game runs
+// it at once (a puppet took no hits), and the host hands it over; one the host's 47 is on stays.
+TEST(Session_NpcInTheClientsHandsIsRunByTheClient) {
+    Duo d(41);
+    d.HostLoads(c_Miami, 10);
+    d.ClientLoads(c_Miami, 10, 0.f);
+    d.hostWorld.player.pos = FakeWorld::Center(0x1000);
+    d.clientWorld.player.pos = d.hostWorld.player.pos + Vec3 { 1.f, 0.f, 0.f };
+    d.Start();
+    REQUIRE(d.StepUntilSynced(2.0));
+    d.Step(3.0);
+    REQUIRE(d.clientWorld.puppets.count(0x1003));
+
+    d.clientWorld.victim.id = 0x1003;
+    d.clientWorld.victim.flags = NpcFlag_Alive;
+    d.clientWorld.victim.pose.rotations.assign(4, Quat {});
+    d.Step(0.1);
+    CHECK_MSG(!d.clientWorld.puppets.count(0x1003), "still a puppet on the client the moment its 47 is on it");
+    d.Step(1.5);
+    CHECK(d.hostWorld.puppets.count(0x1003) && !d.clientWorld.puppets.count(0x1003));
+
+    // The host's 47 on the same NPC: the host keeps it.
+    d.hostWorld.victim.id = 0x1004;
+    d.hostWorld.victim.flags = NpcFlag_Alive;
+    d.hostWorld.victim.pose.rotations.assign(4, Quat {});
+    d.clientWorld.victim.id = 0x1004;
+    d.Step(2.0);
+    CHECK(!d.hostWorld.puppets.count(0x1004));
+
+    // Both let go: with the players together, everything goes back to the host.
+    d.clientWorld.victim.id = 0;
+    d.hostWorld.victim.id = 0;
+    d.Step(6.0);
+    CHECK(!d.hostWorld.puppets.count(0x1003) && d.clientWorld.puppets.count(0x1003));
+}
+
+TEST(Session_NpcOurPlayerHitsIsOursToRun) {
+    Duo d(43);
+    d.HostLoads(c_Miami, 10);
+    d.ClientLoads(c_Miami, 10, 0.f);
+    d.hostWorld.player.pos = FakeWorld::Center(0x1000);
+    d.clientWorld.player.pos = d.hostWorld.player.pos + Vec3 { 1.f, 0.f, 0.f };
+    d.Start();
+    REQUIRE(d.StepUntilSynced(2.0));
+    d.Step(3.0);
+    REQUIRE(d.clientWorld.puppets.count(0x1005));
+
+    // The client's 47 throws something at it: its own AI back at once (no wait for a round trip),
+    // and the host hands it over.
+    d.client.ClaimNpc(0x1005, d.t);
+    CHECK_MSG(!d.clientWorld.puppets.count(0x1005), "still a puppet on the client right after its 47 hit it");
+    d.Step(1.0);
+    CHECK_MSG(d.hostWorld.puppets.count(0x1005), "the host didn't hand over an NPC the client's 47 hit");
+    CHECK(!d.clientWorld.puppets.count(0x1005));
+
+    // The host's 47 hits one of its own: nothing changes hands, nothing breaks.
+    d.host.ClaimNpc(0x1006, d.t);
+    d.Step(0.5);
+    CHECK(!d.hostWorld.puppets.count(0x1006));
+
+    // Left alone, with the players together: back to the host in time.
+    d.Step(12.0);
+    CHECK(!d.hostWorld.puppets.count(0x1005) && d.clientWorld.puppets.count(0x1005));
+}
+
+// A coin lands by an NPC in the client's game, which the host's game runs: the client's game runs
+// the whole investigation (players saw the guard stand there with a "?" for good).
+TEST(Session_NpcLookingIntoSomethingStaysWithItsGame) {
+    Duo d(47);
+    d.HostLoads(c_Miami, 10);
+    d.ClientLoads(c_Miami, 10, 0.f);
+    d.hostWorld.player.pos = FakeWorld::Center(0x1000);
+    d.clientWorld.player.pos = d.hostWorld.player.pos + Vec3 { 1.f, 0.f, 0.f };
+    d.Start();
+    REQUIRE(d.StepUntilSynced(2.0));
+    d.Step(3.0);
+    REQUIRE(d.clientWorld.puppets.count(0x1005));
+
+    d.client.ClaimNpc(0x1005, d.t, 40.0, "looking into something here");
+    CHECK_MSG(!d.clientWorld.puppets.count(0x1005), "still a puppet on the client right after its game claimed it");
+    d.Step(1.0);
+    CHECK(d.hostWorld.puppets.count(0x1005) && !d.clientWorld.puppets.count(0x1005));
+
+    // Still the client's 20 s on, the players standing together (a hit's 3 s claim is long over).
+    d.Step(20.0);
+    CHECK_MSG(d.hostWorld.puppets.count(0x1005) && !d.clientWorld.puppets.count(0x1005), "handed back in the middle of the investigation");
+
+    // Over: back to the host.
+    d.Step(35.0);
+    CHECK(!d.hostWorld.puppets.count(0x1005) && d.clientWorld.puppets.count(0x1005));
+
+    // One the client runs already, claimed: the host doesn't take it back while the claim lasts.
+    d.clientWorld.player.pos = FakeWorld::Center(0x1009);
+    d.Step(8.0);
+    REQUIRE(!d.clientWorld.puppets.count(0x1009) && d.hostWorld.puppets.count(0x1009));
+    d.client.ClaimNpc(0x1009, d.t, 30.0, "looking into something here");
+    d.clientWorld.player.pos = d.hostWorld.player.pos + Vec3 { 1.f, 0.f, 0.f };
+    d.hostWorld.player.pos = FakeWorld::Center(0x1009);
+    d.Step(15.0);
+    CHECK_MSG(!d.clientWorld.puppets.count(0x1009) && d.hostWorld.puppets.count(0x1009), "the host took back an NPC the client's game had claimed");
+    d.Step(30.0);
+    CHECK(d.clientWorld.puppets.count(0x1009) && !d.hostWorld.puppets.count(0x1009));
+}
+
+// An NPC that is anything but calm stays with the game it is searching in (the other game's AI
+// knows nothing of what it is looking for).
+TEST(Session_NpcThatIsNotCalmDoesNotChangeHands) {
+    Duo d(49);
+    d.HostLoads(c_Miami, 10);
+    d.ClientLoads(c_Miami, 10, 0.f);
+    d.hostWorld.player.pos = FakeWorld::Center(0x1000);
+    d.clientWorld.player.pos = FakeWorld::Center(0x1009);
+    d.Start();
+    REQUIRE(d.StepUntilSynced(2.0));
+    d.Step(3.0);
+    REQUIRE(!d.hostWorld.puppets.count(0x1000) && d.clientWorld.puppets.count(0x1000));
+
+    // NPC 0 gets agitated in the host's game (below "alerted"), and the players swap places.
+    d.hostWorld.npcs[0x1000].tension = 2;
+    d.clientWorld.player.pos = FakeWorld::Center(0x1000);
+    d.hostWorld.player.pos = FakeWorld::Center(0x1009);
+    d.Step(8.0);
+    CHECK_MSG(!d.hostWorld.puppets.count(0x1000) && d.clientWorld.puppets.count(0x1000), "an agitated NPC changed hands");
+    CHECK_MSG(!d.hostWorld.puppets.count(0x1009) && d.clientWorld.puppets.count(0x1009), "a calm NPC didn't follow the players");
+
+    // Calm again: it goes to the game that is nearer.
+    d.hostWorld.npcs[0x1000].tension = 1;
+    d.Step(8.0);
+    CHECK(d.hostWorld.puppets.count(0x1000) && !d.clientWorld.puppets.count(0x1000));
+}
+
 TEST(Session_PauseHoldsBothGames) {
     Duo d(35);
     d.HostLoads(c_Miami, 2);
@@ -498,6 +819,40 @@ TEST(Session_RestartReachesThePartnerInTheSameMission) {
 
     // A restart of some other mission does nothing here.
     d.host.OnLocalRestart("assembly:/_pro/scenes/missions/paris/_scene_paris.entity");
+    d.Step(0.5);
+    CHECK(d.clientWorld.restarts == 0);
+}
+
+// Reliable restart requests can arrive after the receiver reloads the very same
+// mission. Rejecting the old host epoch prevents an unintended second restart.
+TEST(Session_LateRestartCannotRestartTheNextMissionRun) {
+    Duo d(136);
+    d.HostLoads(c_Miami, 2);
+    d.ClientLoads(c_Miami, 2, 0.f);
+    d.Start();
+    REQUIRE(d.StepUntilSynced(2.0));
+    const uint32_t oldEpoch = d.host.Status().epoch;
+
+    d.client.OnLocalRestart(c_Miami.scene); // queued, not delivered yet
+    d.hostWorld.UnloadScene();
+    d.host.OnLocalSceneUnloaded();
+    d.HostLoads(c_Miami, 2); // same scene, but a new host epoch
+    CHECK(d.host.Status().epoch != oldEpoch);
+
+    d.Step(0.5);
+    CHECK(d.hostWorld.restarts == 0);
+}
+
+TEST(Session_RestartDoesNotInterruptReceiverReloading) {
+    Duo d(137);
+    d.HostLoads(c_Miami, 2);
+    d.ClientLoads(c_Miami, 2, 0.f);
+    d.Start();
+    REQUIRE(d.StepUntilSynced(2.0));
+
+    d.host.OnLocalRestart(c_Miami.scene);
+    d.clientWorld.UnloadScene();
+    d.client.OnLocalSceneUnloaded(); // already tearing down before delivery
     d.Step(0.5);
     CHECK(d.clientWorld.restarts == 0);
 }
@@ -812,7 +1167,42 @@ TEST(Session_ReconnectTakesTheOldPlace) {
     CHECK(HasNote(d.hostWorld, "lost connection"));
 }
 
-// Playback lag follows the link: small on a steady one, larger when packets come unevenly.
+// The host stays in the running mission while a guest loses the network entirely.
+// Rejoin must establish a fresh connection and a fresh ready handshake before
+// any world updates resume; the user should not have to restart the mission.
+TEST(Session_RejoinSameMissionAfterRealTimeout) {
+    Duo d(4601);
+    d.HostLoads(c_Miami, 4);
+    d.ClientLoads(c_Miami, 4, 0.f);
+    d.Start();
+    REQUIRE(d.StepUntilSynced(2.0));
+    d.Step(0.5);
+    CHECK(d.hostWorld.remoteShown && d.clientWorld.remoteShown);
+    const uint32_t initialEpoch = d.host.Status().epoch;
+
+    d.net->config.cut = true;
+    d.Step(std::max(d.host.Config().timeout, d.client.Config().timeout) + 1.5);
+    CHECK(d.host.Status().state == SessionState::Listening);
+    CHECK(d.client.Status().state == SessionState::Failed);
+    CHECK(!d.host.Synced() && !d.client.Synced());
+    CHECK(!d.hostWorld.remoteShown && !d.clientWorld.remoteShown);
+
+    d.net->config.cut = false;
+    d.client.Join(d.net->Open({ 0x0A000002, 50177 }), c_HostEp, d.t);
+    REQUIRE(d.StepUntilSynced(4.0));
+    CHECK(d.host.Status().state == SessionState::Connected);
+    CHECK(d.client.Status().state == SessionState::Connected);
+    CHECK(d.host.Status().epoch == initialEpoch); // host's mission was never restarted
+    CHECK(d.host.Status().peerName == "Client");
+    CHECK(d.client.Status().peerName == "Host");
+
+    d.Step(1.5);
+    CHECK(d.hostWorld.remoteShown && d.clientWorld.remoteShown);
+    CHECK(d.host.Status().synced && d.client.Status().synced);
+    CHECK(d.host.Status().npcsTracked == 4);
+}
+
+ // Playback lag follows the link: small on a steady one, larger when packets come unevenly.
 TEST(Session_PlaybackDelayFollowsTheLink) {
     const auto s_Delay = [](double p_Min, double p_Max) -> double {
         Duo d(47);
@@ -886,6 +1276,87 @@ TEST(Session_BurstIsNotCongestion) {
 
     CHECK(!HasNote(d.hostWorld, "struggling"));
     CHECK(d.clientWorld.markKinds.size() == 150);
+}
+
+
+// Every NPC near the partner animates there (not only the nearest few), each from the bones that
+// changed, laid over its last whole pose.
+TEST(Session_EveryNpcNearThePartnerIsPosed) {
+    // (The fake world's NPCs stand 40 m apart: the ranges scaled to have many in them.)
+    SessionConfig s_Cfg;
+    s_Cfg.npcPoseRange = 130.f;
+    s_Cfg.npcPoseNear = 45.f;
+    s_Cfg.npcPoseMid = 90.f;
+    Duo d(61, s_Cfg);
+    d.HostLoads(c_Miami, 30);
+    d.ClientLoads(c_Miami, 30, 0.f);
+    d.hostWorld.player.pos = FakeWorld::Center(0x100C); // the middle of the crowd
+    d.clientWorld.player.pos = FakeWorld::Center(0x100C) + Vec3 { 1.f, 0.f, 0.f }; // together: the host runs them all
+    Pose s_Pose;
+    s_Pose.rotations.assign(231, Quat {});
+
+    for (uint64_t s_Id = 0x1000; s_Id < 0x1000 + 30; ++s_Id)
+        if (Distance(FakeWorld::Center(s_Id), d.clientWorld.player.pos) < 115.f)
+            d.hostWorld.npcPoses[s_Id] = s_Pose;
+
+    REQUIRE(d.hostWorld.npcPoses.size() >= 12);
+    d.Start();
+    REQUIRE(d.StepUntilSynced(2.0));
+    d.Step(3.0);
+
+    for (const auto& [s_Id, s_Unused] : d.hostWorld.npcPoses)
+        CHECK_MSG(d.clientWorld.shownNpcPoses.count(s_Id), "npc %llx not posed (puppet %d, %.0f m)", static_cast<unsigned long long>(s_Id),
+            int(d.clientWorld.puppets.count(s_Id)), Distance(FakeWorld::Center(s_Id), d.clientWorld.player.pos));
+
+    // One bone of each turns: only that goes, and it shows.
+    const Quat s_Turned = Normalize(Quat { 0.3f, 0.f, 0.f, 0.95f });
+    const auto s_Before = d.host.Status().stats.bytesSent;
+
+    for (auto& [s_Id, s_P] : d.hostWorld.npcPoses)
+        s_P.rotations[42] = s_Turned;
+
+    d.Step(1.0);
+    const double s_Sent = static_cast<double>(d.host.Status().stats.bytesSent - s_Before);
+
+    for (const auto& [s_Id, s_Unused] : d.hostWorld.npcPoses) {
+        REQUIRE(d.clientWorld.shownNpcPoses.count(s_Id));
+        CHECK(std::fabs(Dot(d.clientWorld.shownNpcPoses[s_Id].rotations[42], s_Turned)) > 0.999f);
+        CHECK(d.clientWorld.shownNpcPoses[s_Id].rotations.size() == 231);
+    }
+
+    // Whole poses each time would be ~1 KB each, several a second for each NPC.
+    CHECK_MSG(s_Sent < 60000.0, "%.0f bytes in a second for %zu npcs", s_Sent, d.hostWorld.npcPoses.size());
+}
+
+// The changes of a lost whole pose aren't laid over nothing: the puppet waits for the next whole
+// one, and is posed right from then on, even over a lossy link.
+TEST(Session_NpcPosesSurviveLoss) {
+    Duo d(62);
+    d.net->config = { 0.02, 0.06, 0.15, 0.0, false };
+    d.HostLoads(c_Miami, 3);
+    d.ClientLoads(c_Miami, 3, 0.f);
+    d.hostWorld.player.pos = FakeWorld::Center(0x1000);
+    d.clientWorld.player.pos = FakeWorld::Center(0x1000) + Vec3 { 1.f, 0.f, 0.f };
+    Pose s_Pose;
+    s_Pose.rotations.assign(231, Quat {});
+    d.hostWorld.npcPoses[0x1000] = s_Pose;
+    d.Start();
+    REQUIRE(d.StepUntilSynced(4.0));
+
+    for (int i = 0; i < 40; ++i) {
+        const float a = 0.05f * static_cast<float>(i);
+        d.hostWorld.npcPoses[0x1000].rotations[i % 231] = Normalize(Quat { std::sin(a), 0.f, 0.f, std::cos(a) });
+        d.hostWorld.npcPoses[0x1000].rotations[200] = Normalize(Quat { 0.f, std::sin(a), 0.f, std::cos(a) });
+        d.Step(0.25);
+    }
+
+    d.Step(3.0);
+    REQUIRE(d.clientWorld.shownNpcPoses.count(0x1000));
+    const auto& s_Shown = d.clientWorld.shownNpcPoses[0x1000];
+    REQUIRE(s_Shown.rotations.size() == 231);
+
+    for (size_t b = 0; b < 231; ++b)
+        CHECK_MSG(std::fabs(Dot(s_Shown.rotations[b], d.hostWorld.npcPoses[0x1000].rotations[b])) > 0.9995f, "bone %zu", b);
 }
 
 // An NPC standing still isn't streamed over and over, and still keeps its pose there.
@@ -1207,12 +1678,83 @@ TEST(Session_GameVersionPolicy) {
 TEST(Session_MissionEventsReachPeer) {
     Duo d(28);
     d.HostLoads(c_Miami, 0);
+    d.ClientLoads(c_Miami, 0, 0.f);
     d.Start();
-    d.Step(1.0);
+    REQUIRE(d.StepUntilSynced(2.0));
     d.host.SendMissionEvent("ContractEnd", "{\"Value\":{}}");
     d.Step(0.5);
     REQUIRE(!d.clientWorld.peerEvents.empty());
     CHECK(d.clientWorld.peerEvents.back() == "ContractEnd:{\"Value\":{}}");
+}
+
+// Mission events from the previous game run must never touch objects in a
+// fresh run of the same map, even when the old reliable packet arrives late.
+TEST(Session_LateMissionEventCannotApplyToNewRun) {
+    Duo d(138);
+    d.HostLoads(c_Miami, 0);
+    d.ClientLoads(c_Miami, 0, 0.f);
+    d.Start();
+    REQUIRE(d.StepUntilSynced(2.0));
+    const uint32_t s_OldEpoch = d.host.Status().epoch;
+
+    d.client.SendMissionEvent("Coop_ItemSpawn", "old-run");
+    d.hostWorld.UnloadScene();
+    d.host.OnLocalSceneUnloaded();
+    d.HostLoads(c_Miami, 0);
+    CHECK(d.host.Status().epoch != s_OldEpoch);
+    d.Step(0.5);
+    CHECK(d.hostWorld.peerEvents.empty());
+}
+
+TEST(Session_MissionEventsAreIgnoredDuringLoading) {
+    Duo d(139);
+    d.HostLoads(c_Miami, 0);
+    d.ClientLoads(c_Miami, 0, 0.f);
+    d.Start();
+    REQUIRE(d.StepUntilSynced(2.0));
+
+    d.host.SendMissionEvent("Coop_BodyOutfit", "stale-actor");
+    d.clientWorld.UnloadScene();
+    d.client.OnLocalSceneUnloaded();
+    d.Step(0.5);
+    CHECK(d.clientWorld.peerEvents.empty());
+}
+
+TEST(Session_ConnectionEventsWorkOutsideMissions) {
+    Duo d(140);
+    d.Start();
+    d.Step(1.0);
+    REQUIRE(d.host.Status().state == SessionState::Connected);
+    REQUIRE(d.client.Status().state == SessionState::Connected);
+
+    d.host.SendMissionEvent("Coop_Account", "synthetic-test-account");
+    d.host.SendMissionEvent("Coop_ReadyCheck", "");
+    d.host.SendMissionEvent("Coop_ItemSpawn", "must-not-send-without-a-scene");
+    d.Step(0.5);
+    REQUIRE(d.clientWorld.peerEvents.size() == 2);
+    CHECK(d.clientWorld.peerEvents[0] == "Coop_Account:synthetic-test-account");
+    CHECK(d.clientWorld.peerEvents[1] == "Coop_ReadyCheck:");
+}
+
+TEST(Session_SkeletonDoesNotResetRigDuringReload) {
+    Duo d(141);
+    d.HostLoads(c_Miami, 0);
+    d.ClientLoads(c_Miami, 0, 0.f);
+    d.hostWorld.skeleton = { -1, 0 };
+    d.Start();
+    REQUIRE(d.StepUntilSynced(2.0));
+    d.Step(0.5);
+    REQUIRE(d.clientWorld.remoteSkeletons > 0);
+    const int s_Before = d.clientWorld.remoteSkeletons;
+
+    d.hostWorld.skeleton = { -1, 0, 1 }; // newer rig packet queued by the host
+    d.t += 0.5;
+    d.net->SetTime(d.t);
+    d.host.Tick(d.t, static_cast<float>(d.dt));
+    d.clientWorld.UnloadScene();
+    d.client.OnLocalSceneUnloaded();
+    d.Step(0.5);
+    CHECK(d.clientWorld.remoteSkeletons == s_Before);
 }
 
 TEST(Session_ItemChangesReachPeer) {
@@ -1234,6 +1776,18 @@ TEST(Session_ItemChangesReachPeer) {
     REQUIRE(d.clientWorld.peerItems.size() == 1);
     CHECK(!d.clientWorld.peerItems[0].Taken());
     CHECK(Distance(d.clientWorld.peerItems[0].xf.pos, s_Dropped.xf.pos) < 0.01f);
+
+    // Where it came to rest, and where a body came to lie: their flags arrive as sent.
+    ItemChange s_Rest { 0x42, ItemFlag_Rest, {} };
+    s_Rest.xf.pos = { 3.2f, 4.1f, 0.02f };
+    ItemChange s_Body { 0x1000, static_cast<uint8_t>(ItemFlag_Body | ItemFlag_Rest), {} };
+    s_Body.xf.pos = { -7.f, 2.f, 0.1f };
+    d.hostWorld.itemChanges.push_back(s_Rest);
+    d.hostWorld.itemChanges.push_back(s_Body);
+    d.Step(0.5);
+    REQUIRE(d.clientWorld.peerItems.size() == 3);
+    CHECK(d.clientWorld.peerItems[1].flags == ItemFlag_Rest && Distance(d.clientWorld.peerItems[1].xf.pos, s_Rest.xf.pos) < 0.01f);
+    CHECK(d.clientWorld.peerItems[2].flags == (ItemFlag_Body | ItemFlag_Rest) && d.clientWorld.peerItems[2].id == 0x1000);
 }
 
 TEST(Session_SkeletonSentOnceAndOnChange) {
@@ -1372,4 +1926,21 @@ TEST(Socket_ResolveRejectsBadInput) {
     CHECK(!ResolveEndpoint("1.2.3.4:99999", kDefaultPort, e, err));
     CHECK(!ResolveEndpoint("1.2.3.4:abc", kDefaultPort, e, err));
     CHECK(ResolveEndpoint(" 10.0.0.5 ", kDefaultPort, e, err) && e.ip == 0x0A000005 && e.port == kDefaultPort);
+    // Pasted from a chat, with a tab and a line end: was "Invalid port".
+    CHECK(ResolveEndpoint("\t100.64.1.2:47050 \r\n", kDefaultPort, e, err) && e.ip == 0x64400102 && e.port == 47050);
+    // IPv6: refused with a word about it, not as a port.
+    CHECK(!ResolveEndpoint("fe80::1", kDefaultPort, e, err) && err.find("IPv6") != std::string::npos);
+    CHECK(!ResolveEndpoint("[::1]:47047", kDefaultPort, e, err) && err.find("IPv6") != std::string::npos);
+}
+
+TEST(Socket_TailscaleAddressIsFromTheAdapters) {
+    // Whatever this PC has: empty, or a 100.64.0.0/10 address (never a name lookup's leftovers).
+    const std::string s_Address = LocalTailscaleAddress();
+
+    if (!s_Address.empty()) {
+        Endpoint e;
+        std::string err;
+        REQUIRE(ResolveEndpoint(s_Address, kDefaultPort, e, err));
+        CHECK((e.ip & 0xFFC00000u) == 0x64400000u);
+    }
 }

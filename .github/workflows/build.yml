@@ -12,6 +12,10 @@ jobs:
         steps:
             -   uses: actions/checkout@v4
 
+            -   name: Check the Linux installer
+                shell: bash
+                run: bash -n installer/installer.sh
+
             -   name: Build core and tests
                 run: |
                     cmake -S core -B core/build -G "Visual Studio 17 2022" -A x64
@@ -30,7 +34,7 @@ jobs:
         steps:
             -   uses: actions/checkout@v4
 
-            -   name: Fetch pinned ZHMModSDK v4.1.1 (SHA-256 checked)
+            -   name: Fetch pinned ZHMModSDK v4.2.1 and v4.1.1 (SHA-256 checked)
                 shell: pwsh
                 run: ./tools/fetch-sdk.ps1
 
@@ -47,9 +51,29 @@ jobs:
                 shell: pwsh
                 run: ./tools/check-dll.ps1
 
+            # The build for players on game 3.280, against ZHMModSDK v4.1.1 (the installer picks it).
+            -   name: Configure (game 3.280)
+                shell: cmd
+                run: cmake -S . -B _build-3280 -G "Visual Studio 17 2022" -A x64 "-DCOOP_SDK:STRING=4.1.1" -DZHMMODSDK_DEVPKG_DIR="${{ github.workspace }}/_deps/old-4.1.1/devpkg"
+
+            -   name: Build (game 3.280)
+                # The install target also copies HitmanCoop-NetTest.exe; build it as well.
+                run: cmake --build _build-3280 --config RelWithDebInfo
+
+            -   name: Install (game 3.280)
+                run: cmake --install _build-3280 --config RelWithDebInfo --prefix _build-3280/install
+
             -   name: Package
                 shell: pwsh
                 run: ./tools/package.ps1
+
+            -   name: Offline Windows launcher updater regression tests
+                shell: pwsh
+                run: |
+                    $setup = "_dist/HitmanCoop-Artur-0.14.3/HitmanCoop-Setup.exe"
+                    if (-not (Test-Path $setup)) { throw "No packaged installer for update checks" }
+                    $proc = Start-Process -FilePath (Resolve-Path $setup).Path -ArgumentList "--self-test-launcher-updater" -Wait -PassThru
+                    if ($proc.ExitCode -ne 0) { throw "Launcher update tests failed (exit $($proc.ExitCode))" }
 
             -   uses: actions/upload-artifact@v4
                 with:
@@ -57,4 +81,129 @@ jobs:
                     path: |
                         _dist/*.zip
                         _dist/*.exe
+                        _dist/*.tar.gz
                         _dist/*.sha256
+
+    deck-appimage:
+        name: Steam Deck / Linux standalone AppImage (Artur v0.14.3)
+        runs-on: ubuntu-24.04
+        needs: mod
+        steps:
+            -   uses: actions/checkout@v4
+            -   uses: actions/download-artifact@v4
+                with:
+                    name: HitmanCoop
+                    path: downloaded
+            -   name: Validate matching Linux payload
+                run: |
+                    set -euo pipefail
+                    test -s downloaded/HitmanCoop-Artur-0.14.3-linux.tar.gz
+                    (cd downloaded && sha256sum --check HitmanCoop-Artur-0.14.3-linux.tar.gz.sha256)
+                    tar -tzf downloaded/HitmanCoop-Artur-0.14.3-linux.tar.gz | grep 'HitmanCoop-Artur-0.14.3/installer.sh'
+                    bash -n steamdeck/appimage-v014/AppRun steamdeck/appimage-v014/build.sh steamdeck/appimage-v014/steamdeck-ui.sh steamdeck/appimage-v014/steamdeck-updater.sh
+            -   name: Validate launch scripts and install AppImage tooling
+                run: |
+                    set -euo pipefail
+                    sudo apt-get update -qq
+                    sudo apt-get install -y --no-install-recommends shellcheck desktop-file-utils curl file
+                    shellcheck --severity=error steamdeck/appimage-v014/AppRun steamdeck/appimage-v014/build.sh steamdeck/appimage-v014/steamdeck-ui.sh steamdeck/appimage-v014/steamdeck-updater.sh
+                    desktop-file-validate steamdeck/appimage/artur-edition.desktop
+                    mkdir -p tools output
+                    curl -fsSL --retry 3 -o tools/appimagetool.AppImage 'https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage'
+                    echo 'ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  tools/appimagetool.AppImage' | sha256sum -c -
+                    curl -fsSL --retry 3 -o tools/runtime-x86_64 'https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64'
+                    echo '2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  tools/runtime-x86_64' | sha256sum -c -
+                    chmod +x tools/appimagetool.AppImage tools/runtime-x86_64
+            -   name: Build and smoke-test offline AppImage
+                run: |
+                    set -euo pipefail
+                    output='output/Artur-Edition-0.14.3-SteamDeck-Linux-Installer-x86_64.AppImage'
+                    bash steamdeck/appimage-v014/build.sh downloaded/HitmanCoop-Artur-0.14.3-linux.tar.gz tools/appimagetool.AppImage tools/runtime-x86_64 "$output"
+                    APPIMAGE_EXTRACT_AND_RUN=1 "$output" --status | tee output/appimage-smoke-test.txt
+                    APPIMAGE_EXTRACT_AND_RUN=1 "$output" --selftest-update
+                    grep -F 'Offline v0.14.3 payload: ready' output/appimage-smoke-test.txt
+                    # Artifacts download flat, so the published checksum must omit output/.
+                    (cd output && sha256sum "$(basename "$output")" > "$(basename "$output").sha256")
+                    cat "$output.sha256"
+            -   uses: actions/upload-artifact@v4
+                with:
+                    name: Artur-v014-SteamDeck-Linux-AppImage
+                    path: |
+                        output/*.AppImage
+                        output/*.AppImage.sha256
+                        output/appimage-smoke-test.txt
+                    retention-days: 14
+
+    publish-prerelease:
+        name: Publish optional experimental Artur v0.14.0 release candidate
+        runs-on: ubuntu-24.04
+        needs: [mod, deck-appimage]
+        if: startsWith(github.ref, 'refs/tags/artur-v0.14.0-rc')
+        permissions:
+            contents: write
+        env:
+            GH_TOKEN: ${{ github.token }}
+        steps:
+            -   uses: actions/download-artifact@v4
+                with:
+                    name: HitmanCoop
+                    path: downloads/windows
+            -   uses: actions/download-artifact@v4
+                with:
+                    name: Artur-v014-SteamDeck-Linux-AppImage
+                    path: downloads/linux
+            -   name: Verify binaries and release as prerelease only
+                shell: bash
+                run: |
+                    set -euo pipefail
+                    (cd downloads/windows && for sum in *.sha256; do sha256sum -c "$sum"; done)
+                    (cd downloads/linux && sha256sum -c *.AppImage.sha256)
+                    gh release create "$GITHUB_REF_NAME" \
+                      downloads/windows/*.zip downloads/windows/*.exe downloads/windows/*.tar.gz downloads/windows/*.sha256 \
+                      downloads/linux/*.AppImage downloads/linux/*.AppImage.sha256 \
+                      --repo "$GITHUB_REPOSITORY" \
+                      --target "$GITHUB_SHA" \
+                      --prerelease \
+                      --title "Artur Edition 0.14.0 RC1 — Experimental Windows and Steam Deck" \
+                      --notes "EXPERIMENTAL PRERELEASE — original HITMAN Co-op created by Jordan Rodrigues. Integrates Jordan's upstream v0.14.0 BlackBox crash flight recorder, new NPC/body/item and scripted mission synchronization, modern Windows/Tailscale setup and Linux installer, while retaining Artur branding, avatar diagnostics and safe outfit guards. Fork protocol 21. Both players must use this same Artur RC; incompatible with official Jordan protocol 18 and Artur R2.18.1 protocol 16. Windows and Linux packages are separately versioned. Steam Deck hardware and real two-player gameplay on this RC have not yet been validated. Automatic updates disabled until this fork provides its own signed update feed. Use at your own risk; back up existing mods and use matching installation/uninstallation method. Artur R2.18.1 remains the last live user-tested stable release. GPL-3.0-or-later."
+
+    publish-latest:
+        name: Publish latest Artur Edition 0.14.3 with installers and signed updater
+        runs-on: ubuntu-24.04
+        needs: [mod, deck-appimage]
+        if: github.ref == 'refs/heads/release/artur-v0.14.3'
+        permissions:
+            contents: write
+        env:
+            GH_TOKEN: ${{ github.token }}
+        steps:
+            -   uses: actions/checkout@v4
+            -   uses: actions/download-artifact@v4
+                with:
+                    name: HitmanCoop
+                    path: downloads/windows
+            -   uses: actions/download-artifact@v4
+                with:
+                    name: Artur-v014-SteamDeck-Linux-AppImage
+                    path: downloads/linux
+            -   name: Check release asset hashes and publish latest
+                shell: bash
+                run: |
+                    set -euo pipefail
+                    (cd downloads/windows && for sum in *.sha256; do sha256sum -c "$sum"; done)
+                    (cd downloads/linux && sha256sum -c *.AppImage.sha256)
+                    test -s docs/RELEASE-0143.md
+                    # Device-first filenames make the right installer obvious. Generate checksums
+                    # after renaming so each .sha256 names the actual downloadable asset.
+                    mkdir -p release
+                    cp downloads/windows/HitmanCoop-Setup-by-Artur-0.14.3.exe release/Windows-PC-Artur-Edition-0.14.3-Setup.exe
+                    cp downloads/windows/HitmanCoop-Artur-0.14.3.zip release/Windows-PC-Artur-Edition-0.14.3-ZIP-Installer.zip
+                    cp downloads/windows/HitmanCoop-Artur-0.14.3-linux.tar.gz release/Linux-PC-Artur-Edition-0.14.3-Installer.tar.gz
+                    cp downloads/linux/Artur-Edition-0.14.3-SteamDeck-Linux-Installer-x86_64.AppImage release/Steam-Deck-Artur-Edition-0.14.3-Installer.AppImage
+                    (cd release && for file in *.exe *.zip *.tar.gz *.AppImage; do sha256sum "$file" > "$file.sha256"; done)
+                    gh release create "artur-v0.14.3" release/* \
+                      --repo "$GITHUB_REPOSITORY" \
+                      --target "$GITHUB_SHA" \
+                      --latest \
+                      --title "Artur Edition 0.14.3 - Launcher Auto-Update (Experimental)" \
+                      --notes-file docs/RELEASE-0143.md

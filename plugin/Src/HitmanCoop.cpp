@@ -1,9 +1,14 @@
 #include "HitmanCoop.h"
 #include "CoopText.h"
+#include "NativeRuntimeCompatibility.h"
 #include "coop/PartnerPresence.h"
 #include "CrashTrace.h"
+#include "BlackBox.h"
+#include "GameTweaks.h"
+#include "WorldScript.h"
 #include "CrashGuards.h"
 #include "GamePause.h"
+#include "Log.h"
 #include "PoseHook.h"
 #include "TypeDump.h"
 
@@ -17,6 +22,8 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <thread>
+#include <vector>
 
 #include "Functions.h"
 #include "Globals.h"
@@ -30,6 +37,8 @@
 #include <Glacier/ZApplicationEngineWin32.h>
 #include <Glacier/ZGameLoopManager.h>
 #include <Glacier/ZScene.h>
+
+#include "OnlineWatch.h"
 
 #ifndef COOP_DEFAULT_RELAY
 #define COOP_DEFAULT_RELAY ""
@@ -60,9 +69,8 @@ static std::string ToLowerCopy(std::string p_Value) {
     return p_Value;
 }
 
-// Fail closed before game-memory patches if an experimental 3.290 build is loaded
-// with the older August SDK runtime. Matching headers are not enough: the DLL
-// installed beside HITMAN3.exe must be the SDK 4.2.0 binary too.
+// Read the loaded game and SDK versions before any native detours. The validated
+// pairing depends on the target compiled into THIS DLL, not on a global 3.290/4.2.0 constant.
 static std::string ModuleFileVersion(HMODULE s_Module) {
     wchar_t s_Path[MAX_PATH] {};
     if (!s_Module || !GetModuleFileNameW(s_Module, s_Path, MAX_PATH))
@@ -87,6 +95,18 @@ static std::string ModuleFileVersion(HMODULE s_Module) {
 
 HitmanCoop::HitmanCoop() = default;
 
+// Reads through a null pointer, under SEH: true when the fault was caught (the test channel's
+// guardtest: the crash handler must report it as one the mod caught, and the game goes on).
+static bool FaultForTest() noexcept {
+    __try {
+        volatile int* s_Null = nullptr;
+        return *s_Null == 12345;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return true;
+    }
+}
+
 std::string HitmanCoop::ModsFolder() {
     char s_Exe[MAX_PATH] {};
     GetModuleFileNameA(nullptr, s_Exe, MAX_PATH);
@@ -96,19 +116,186 @@ std::string HitmanCoop::ModsFolder() {
 }
 
 void HitmanCoop::AppendLog(const std::string& p_Line) {
-    std::lock_guard s_Lock(m_LogMutex);
+    CoopLog::Tagged(coop::LogLevel::Info, p_Line);
+}
 
-    // Capped, so a long session can't fill the disk.
-    if (m_LogPath.empty() || m_LogBytes > 4 * 1024 * 1024)
+// Every 10 s: the game's frame rate and what the mod took of each frame, and whether the patch that
+// stops puppets' AI is doing its job (puppets with none of their AI skipped run their own AI against
+// the partner's positions: NPCs jitter, slide and walk off).
+void HitmanCoop::LogPerf(double p_Now, double p_FrameGap, double p_ModMs) {
+    auto& w = m_Perf;
+
+    if (w.since < 0.0) {
+        w = {};
+        w.since = p_Now;
+        w.skippedThinks = CrashGuards::SkippedThinks();
+        w.emptySlots = CrashGuards::EmptySlots();
+        return;
+    }
+
+    // A load's long frame isn't the game running slowly.
+    if (p_FrameGap > 0.0 && p_FrameGap < 2.0) {
+        ++w.frames;
+        w.frameSum += p_FrameGap;
+        w.frameMax = std::max(w.frameMax, p_FrameGap);
+    }
+
+    w.modSum += p_ModMs;
+    w.modMax = std::max(w.modMax, p_ModMs);
+    const double s_Span = p_Now - w.since;
+
+    if (s_Span < 10.0)
         return;
 
-    char s_Time[32];
-    std::snprintf(s_Time, sizeof(s_Time), "[%9.2f] ", Now());
+    const uint32_t s_Skipped = CrashGuards::SkippedThinks();
+    const uint32_t s_SkippedNow = s_Skipped - w.skippedThinks;
+    const size_t s_Puppets = CrashGuards::PuppetCount();
+    const PoseHook::PinStats s_Pins = PoseHook::TakePinStats();
+    char s_PinText[320] = "";
 
-    if (std::ofstream s_File(m_LogPath, std::ios::app); s_File) {
-        s_File << s_Time << p_Line << '\n';
-        m_LogBytes += p_Line.size() + 13;
+    // The world pins (PoseHook.h): how many puppets' skeletons had to be turned or shifted back
+    // to where the partner's game has them, and by how much at most.
+    if (s_Pins.pinned || s_Pins.corrected || s_Pins.unusable)
+        std::snprintf(s_PinText, sizeof(s_PinText), " | pins: %u NPCs, %u poses put right (up to %.0f deg; by angle <10:%u 10-45:%u 45-80:%u 80-100:%u 100+:%u), %u already right, %u unusable%s",
+            s_Pins.pinned, s_Pins.corrected, s_Pins.maxAngle, s_Pins.angles[0], s_Pins.angles[1], s_Pins.angles[2], s_Pins.angles[3], s_Pins.angles[4],
+            s_Pins.aligned, s_Pins.unusable,
+            s_Pins.layout == 0 ? ", world matrix not recognised yet" : PoseHook::PinsOn() ? "" : ", switched off");
+
+    if (CoopLog::On(coop::LogLevel::Info) && w.frames > 0)
+        CoopLog::Fmt(coop::LogLevel::Info, "perf",
+            "%.0f fps (frames %.1f ms on average, the slowest %.0f ms), the mod %.2f ms a frame (the slowest %.1f ms)%s | in a mission: %s, "
+            "%zu puppets, their AI skipped %u times%s%s",
+            w.frames / s_Span, w.frameSum / w.frames * 1000.0, w.frameMax * 1000.0, w.modSum / w.frames, w.modMax,
+            m_SlowMode ? ", slow-PC mode" : "", m_World.IsInScene() ? "yes" : "no", s_Puppets, s_SkippedNow,
+            s_Puppets > 0 && s_SkippedNow == 0 ? " (PUPPETS' AI ISN'T BEING SKIPPED: they run their own AI against the partner's positions)" : "",
+            s_PinText);
+
+    const uint32_t s_Empty = CrashGuards::EmptySlots();
+
+    if (s_Empty != w.emptySlots)
+        CoopLog::Fmt(coop::LogLevel::Warn, "guard", "restart guard 4 stepped in %u times: the game asked for an actor a restart had taken out (it would have crashed)",
+            s_Empty - w.emptySlots);
+
+    w = {};
+    w.since = p_Now;
+    w.skippedThinks = s_Skipped;
+    w.emptySlots = s_Empty;
+}
+
+std::string HitmanCoop::BugReportResult() const {
+    std::lock_guard s_Lock(m_BugReport->mutex);
+    return m_BugReport->text;
+}
+
+// Everything a bug report needs in one zip on the player's desktop... next to the logs, rather (no
+// paths under the user's folder): the logs of this and the last session, crash reports, the
+// settings (addresses masked) and the diagnostics text. Zipped by Windows' own tar (Windows 10+);
+// a folder if that isn't there.
+void HitmanCoop::SaveBugReport(const std::string& p_Diagnostics) {
+    namespace fs = std::filesystem;
+    SYSTEMTIME s_Time;
+    GetLocalTime(&s_Time);
+    char s_Stamp[32];
+    std::snprintf(s_Stamp, sizeof(s_Stamp), "%04u%02u%02u-%02u%02u%02u", s_Time.wYear, s_Time.wMonth, s_Time.wDay, s_Time.wHour, s_Time.wMinute,
+        s_Time.wSecond);
+
+    const std::string s_Mods = ModsFolder();
+    const fs::path s_Root = fs::path(s_Mods) / "HitmanCoop-reports";
+    const fs::path s_Folder = s_Root / ("report-" + std::string(s_Stamp));
+    std::error_code s_Error;
+    fs::create_directories(s_Folder, s_Error);
+
+    if (s_Error) {
+        std::lock_guard s_Lock(m_BugReport->mutex);
+        m_BugReport->text = "Couldn't make the report folder: " + s_Error.message();
+        return;
     }
+
+    CoopLog::Info("report", std::string("bug report saved: ") + s_Stamp);
+
+    for (const char* s_Name : { "HitmanCoop.log", "HitmanCoop-previous.log", "HitmanCoop-crash.txt", "HitmanCoop-crash-previous.txt", "HitmanCoop-crash-caught.txt",
+             "HitmanCoop-blackbox-crash.txt", "HitmanCoop-blackbox-crash-previous.txt" }) {
+        if (fs::exists(s_Mods + s_Name, s_Error))
+            fs::copy_file(s_Mods + s_Name, s_Folder / s_Name, fs::copy_options::overwrite_existing, s_Error);
+    }
+
+    // The flight recorder as it is now: the detail of the last minutes, whatever the log level.
+    BlackBox::Save((s_Folder / "HitmanCoop-blackbox.txt").string());
+
+    // The mod loader's own log (Retail\ZHMModLoader.log): what loaded, and what it complained about.
+    if (std::ifstream s_In(fs::path(s_Mods).parent_path() / "ZHMModLoader.log"); s_In) {
+        std::ofstream s_Out(s_Folder / "ZHMModLoader.log");
+        std::string s_Line;
+        size_t s_Lines = 0;
+
+        while (std::getline(s_In, s_Line) && ++s_Lines < 20000)
+            s_Out << CoopLog::MaskAddresses(s_Line) << '\n';
+    }
+
+    {
+        std::ifstream s_In(s_Mods + "HitmanCoop.ini");
+        std::ofstream s_Out(s_Folder / "HitmanCoop.ini");
+        std::string s_Line;
+
+        while (std::getline(s_In, s_Line))
+            s_Out << CoopLog::MaskAddresses(s_Line) << '\n';
+    }
+
+    // What the setup did (Retail\HitmanCoop-install.log): install trouble (an antivirus taking the
+    // mod loader, the wrong build) shows there, not in the mod's own log.
+    if (std::ifstream s_In(fs::path(s_Mods).parent_path().parent_path() / "HitmanCoop-install.log"); s_In) {
+        std::ofstream s_Out(s_Folder / "HitmanCoop-install.log");
+        std::string s_Line;
+
+        while (std::getline(s_In, s_Line))
+            s_Out << CoopLog::MaskAddresses(s_Line) << '\n';
+    }
+
+    std::ofstream(s_Folder / "diagnostics.txt") << CoopLog::MaskAddresses(p_Diagnostics);
+
+    // Zipped in the background (a few MB of logs take a moment), then shown in Explorer.
+    const std::string s_Zip = (s_Root / ("HitmanCoop-report-" + std::string(s_Stamp) + ".zip")).string();
+    {
+        std::lock_guard s_Lock(m_BugReport->mutex);
+        m_BugReport->text = "Saving the bug report...";
+    }
+
+    std::thread([s_State = m_BugReport, s_Folder, s_Zip] {
+        std::wstring s_Command = L"\"" + (fs::path(std::getenv("SystemRoot") ? std::getenv("SystemRoot") : "C:\\Windows") / "System32\\tar.exe").wstring() +
+            L"\" -a -c -f \"" + fs::path(s_Zip).wstring() + L"\" -C \"" + s_Folder.wstring() + L"\" .";
+        STARTUPINFOW s_Startup { sizeof(s_Startup) };
+        PROCESS_INFORMATION s_Process {};
+        bool s_Zipped = false;
+
+        if (CreateProcessW(nullptr, s_Command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &s_Startup, &s_Process)) {
+            DWORD s_Exit = 1;
+
+            if (WaitForSingleObject(s_Process.hProcess, 60000) == WAIT_OBJECT_0 && GetExitCodeProcess(s_Process.hProcess, &s_Exit))
+                s_Zipped = s_Exit == 0;
+
+            CloseHandle(s_Process.hProcess);
+            CloseHandle(s_Process.hThread);
+        }
+
+        std::error_code s_Ignored;
+        const std::wstring s_Show = s_Zipped ? fs::path(s_Zip).wstring() : s_Folder.wstring();
+
+        if (s_Zipped)
+            fs::remove_all(s_Folder, s_Ignored);
+
+        std::wstring s_Explorer = L"explorer.exe /select,\"" + s_Show + L"\"";
+        STARTUPINFOW s_Startup2 { sizeof(s_Startup2) };
+        PROCESS_INFORMATION s_Process2 {};
+
+        if (CreateProcessW(nullptr, s_Explorer.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &s_Startup2, &s_Process2)) {
+            CloseHandle(s_Process2.hProcess);
+            CloseHandle(s_Process2.hThread);
+        }
+
+        std::lock_guard s_Lock(s_State->mutex);
+        s_State->text = s_Zipped ? "Saved " + fs::path(s_Zip).filename().string() + " (in Retail\\mods\\HitmanCoop-reports): send it with your bug report."
+                                     : "Saved the folder " + s_Folder.filename().string() + " (in Retail\\mods\\HitmanCoop-reports): zip it and send it.";
+    }).detach();
 }
 
 HitmanCoop::~HitmanCoop() {
@@ -131,13 +318,15 @@ void HitmanCoop::Init() {
     m_LanAddress = coop::LocalLanAddress();
     m_TailscaleAddress = coop::LocalTailscaleAddress();
     LoadSettings();
-    // This isolated compatibility fork specifically targets the October 2026 game.
-    // Refuse all native patches, detours and multiplayer if the game and *loaded*
-    // SDK runtime do not match the verified pairing of SDK headers/runtime.
+    // Keep the hard stop for unknown game/SDK combinations, but use the proper
+    // SDK shipped with each build. 0.14.1 incorrectly required 4.2.0 even though
+    // the pinned 3.290 installer and build use 4.2.1; 3.280 needs SDK 4.1.1.
     const std::string s_FullGameVersion = ModuleFileVersion(GetModuleHandleW(nullptr));
     const std::string s_SdkRuntime = ModuleFileVersion(GetModuleHandleW(L"ZHMModSDK.dll"));
-    if (s_FullGameVersion != "3.290.1.0" || s_SdkRuntime != "4.2.0.0") {
-        m_Unsupported = "game 3.290.1.0 with ZHMModSDK runtime 4.2.0.0 required (loaded " +
+    if (!coop::runtime::Compatible(s_FullGameVersion, s_SdkRuntime, c_GameTarget)) {
+        m_Unsupported = "game " + std::string(coop::runtime::RequiredGame(c_GameTarget)) +
+            " with ZHMModSDK runtime " + std::string(coop::runtime::RequiredSdk(c_GameTarget)) +
+            " required for this " + c_GameTarget + " build (loaded " +
             s_FullGameVersion + " / " + s_SdkRuntime + ")";
         Logger::Error("[HitmanCoop] Experimental build blocked before native hooks: {}", m_Unsupported);
         return;
@@ -148,11 +337,15 @@ void HitmanCoop::Init() {
     Hooks::ZEntitySceneContext_LoadScene->AddDetour(this, &HitmanCoop::OnLoadScene);
     Hooks::ZEntitySceneContext_ClearScene->AddDetour(this, &HitmanCoop::OnClearScene);
     Hooks::ZActor_YouGotHit->AddDetour(this, &HitmanCoop::OnActorHit);
+    Hooks::ZActor_SetOutfit->AddDetour(this, &HitmanCoop::OnActorSetOutfit);
     Hooks::ZKnowledge_SetGameTension->AddDetour(this, &HitmanCoop::OnSetGameTension);
     Hooks::ZAchievementManagerSimple_OnEventSent->AddDetour(this, &HitmanCoop::OnEventSent);
     Hooks::ZLevelManager_SetGameState->AddDetour(this, &HitmanCoop::OnSetGameState);
     Hooks::ZGameUIManagerEntity_TryOpenMenu->AddDetour(this, &HitmanCoop::OnTryOpenMenu);
     Hooks::ZApplicationEngineWin32_OnMainWindowActivated->AddDetour(this, &HitmanCoop::OnWindowActivated);
+    // The script sync (WorldScript.h). [sync] scripted_actions = false: watched, never shared.
+    WorldScript::SetShared(GetSettingBool("sync", "scripted_actions", true));
+    Hooks::SignalOutputPin->AddDetour(this, &HitmanCoop::OnSignalOutputPin);
     m_World.m_EventHook = [this](const std::string& p_Name, const std::string& p_Json) { return OnTeamEvent(p_Name, p_Json); };
 
     if (m_Test.Enabled()) {
@@ -162,40 +355,161 @@ void HitmanCoop::Init() {
 
     Logger::Info("[HitmanCoop] HITMAN Co-op v{} by {} loaded (protocol {}), game version {}.", c_ModVersion, c_Author,
         coop::kProtocolVersion, m_GameVersion);
-    m_Test.Trace("init: HITMAN Co-op " + std::string(c_ModVersion) + ", game " + m_GameVersion + ", game patches " +
-        std::to_string(s_Patches) + " of " + std::to_string(CrashGuards::Count()) + " (" + CrashGuards::Report() + ")");
 
-    if (m_Test.Enabled()) {
-        m_World.SetTrace([this](const std::string& p_Line) { m_Test.Trace(p_Line); });
-        CrashTrace::Install(m_Test.Path() + ".crash");
+    // The log (see Log.h), for players and tests alike: what the mod did, and why, next to the
+    // game's mods folder for a bug report. The last session's log, and its crash report if it had
+    // one, are kept. A report older than that session's last log line is from an earlier session:
+    // kept, not told.
+    const std::string s_Dir = ModsFolder();
+    m_LogPath = s_Dir + "HitmanCoop.log";
+    std::error_code s_Error;
+    const std::string s_Crash = s_Dir + "HitmanCoop-crash.txt";
+
+    if (std::filesystem::exists(s_Crash, s_Error)) {
+        const auto s_CrashTime = std::filesystem::last_write_time(s_Crash, s_Error);
+        const auto s_LogTime = std::filesystem::last_write_time(m_LogPath, s_Error);
+        const bool s_Recent = s_Error || s_CrashTime + std::chrono::seconds(2) >= s_LogTime;
+        std::filesystem::rename(s_Crash, s_Dir + "HitmanCoop-crash-previous.txt", s_Error);
+
+        if (!s_Error && s_Recent)
+            m_PreviousCrash = "mods\\HitmanCoop-crash-previous.txt";
     }
-    else {
-        // For players: what the mod did (a few lines a minute) and any crash, next to the game's
-        // mods folder, to send along with a bug report.
-        const std::string s_Dir = ModsFolder();
-        m_LogPath = s_Dir + "HitmanCoop.log";
 
-        // The last session's log, and its crash report if it had one, are kept for a bug report. A
-        // report older than that session's last log line is from an earlier session: kept, not told.
-        std::error_code s_Error;
-        const std::string s_Crash = s_Dir + "HitmanCoop-crash.txt";
+    // The flight recorder a crash left behind is kept beside its report, as the report is.
+    std::filesystem::rename(s_Dir + "HitmanCoop-blackbox-crash.txt", s_Dir + "HitmanCoop-blackbox-crash-previous.txt", s_Error);
+    std::filesystem::rename(s_Dir + "HitmanCoop-crash.dmp", s_Dir + "HitmanCoop-crash-previous.dmp", s_Error);
+    s_Error.clear();
 
-        if (std::filesystem::exists(s_Crash, s_Error)) {
-            const auto s_CrashTime = std::filesystem::last_write_time(s_Crash, s_Error);
-            const auto s_LogTime = std::filesystem::last_write_time(m_LogPath, s_Error);
-            const bool s_Recent = s_Error || s_CrashTime + std::chrono::seconds(2) >= s_LogTime;
-            std::filesystem::rename(s_Crash, s_Dir + "HitmanCoop-crash-previous.txt", s_Error);
+    CoopLog::SetGameClock(&HitmanCoop::Now);
+    BlackBox::SetClock(&HitmanCoop::Now);
+    CoopLog::Open(m_LogPath, s_Dir + "HitmanCoop-previous.log");
 
-            if (!s_Error && s_Recent)
-                m_PreviousCrash = "mods\\HitmanCoop-crash-previous.txt";
+    // Testing: the trace file gets every log line too (and the heartbeat, see OnFrameUpdate).
+    if (m_Test.Enabled())
+        CoopLog::SetMirror([this](const std::string& p_Line) { m_Test.Raw(p_Line); });
+
+    m_World.SetTrace([](const std::string& p_Line) { CoopLog::Tagged(coop::LogLevel::Info, p_Line); });
+    const std::string s_CrashHeader = "HITMAN Co-op " + std::string(c_ModVersion) + " (" + c_BuildMark + "), game " + m_GameVersion;
+    // [log] crash_dump = false: no minidump beside the crash report (it holds the game's memory).
+    m_CrashDump = GetSettingBool("log", "crash_dump", true);
+    CrashTrace::Install(m_Test.Enabled() ? m_Test.Path() + ".crash" : s_Crash, s_CrashHeader,
+        m_Test.Enabled() ? m_Test.Path() + ".blackbox" : s_Dir + "HitmanCoop-blackbox-crash.txt", s_Dir + "HitmanCoop-crash.dmp", m_CrashDump);
+    WriteLogHeader(s_Patches);
+}
+
+// The first lines of every log: everything about this PC and install a bug report needs, so nobody
+// has to ask. Nothing that identifies the player (no paths under their user folder, no addresses).
+void HitmanCoop::WriteLogHeader(int p_Patches) {
+    using coop::LogLevel;
+    CoopLog::Fmt(LogLevel::Info, "start", "HITMAN Co-op %s by %s, %s (ZHMModSDK %s), protocol %u, log level %s", c_ModVersion, c_Author,
+        c_BuildMark, c_SdkName, coop::kProtocolVersion, ToLowerCopy(coop::LogLevelName(CoopLog::Level())).c_str());
+
+    const std::string s_Game = GameFolder();
+    std::error_code s_Error;
+    const std::string s_Lower = ToLowerCopy(s_Game);
+    const char* s_Store = s_Lower.find("steamapps") != std::string::npos ? "Steam" :
+        std::filesystem::exists(s_Game + "..\\.egstore", s_Error) ? "Epic Games" :
+        s_Lower.find("heroic") != std::string::npos ? "Epic Games (Heroic)" : "store not recognised";
+    CoopLog::Fmt(LogLevel::Info, "start", "game %s, %s, running %s", m_GameVersion.c_str(), s_Store,
+        GetProcAddress(GetModuleHandleA("ntdll.dll"), "wine_get_version") ? "under Wine/Proton" : "on Windows");
+
+    // Windows itself (GetVersionEx lies to programs without a manifest).
+    OSVERSIONINFOW s_Os { sizeof(s_Os) };
+    using RtlGetVersionFn = LONG(WINAPI*)(OSVERSIONINFOW*);
+    if (auto s_Rtl = reinterpret_cast<RtlGetVersionFn>(GetProcAddress(GetModuleHandleA("ntdll.dll"), "RtlGetVersion")))
+        s_Rtl(&s_Os);
+
+    SYSTEM_INFO s_System;
+    GetNativeSystemInfo(&s_System);
+    MEMORYSTATUSEX s_Memory { sizeof(s_Memory) };
+    GlobalMemoryStatusEx(&s_Memory);
+    wchar_t s_LocaleW[LOCALE_NAME_MAX_LENGTH] {};
+    GetUserDefaultLocaleName(s_LocaleW, LOCALE_NAME_MAX_LENGTH);
+    char s_Locale[LOCALE_NAME_MAX_LENGTH * 2] {};
+    WideCharToMultiByte(CP_UTF8, 0, s_LocaleW, -1, s_Locale, sizeof(s_Locale), nullptr, nullptr);
+    CoopLog::Fmt(LogLevel::Info, "start", "Windows %lu.%lu build %lu, %lu CPU threads, %.1f GB memory (%.1f GB free), locale %s, %s", s_Os.dwMajorVersion,
+        s_Os.dwMinorVersion, s_Os.dwBuildNumber, s_System.dwNumberOfProcessors, s_Memory.ullTotalPhys / 1073741824.0,
+        s_Memory.ullAvailPhys / 1073741824.0, s_Locale, m_TailscaleAddress.empty() ? "no Tailscale" : "Tailscale on");
+
+    // The mod loader, and the other mods it loads (a conflict shows here).
+    CoopLog::Fmt(LogLevel::Info, "start", "mod loader ZHMModSDK.dll %s, dinput8.dll %s", FileVersionOf(s_Game + "ZHMModSDK.dll").c_str(),
+        FileVersionOf(s_Game + "dinput8.dll").c_str());
+    {
+        std::ifstream s_Ini(s_Game + "mods.ini");
+        std::string s_Line, s_Mods;
+
+        while (std::getline(s_Ini, s_Line)) {
+            const auto s_Open = s_Line.find('[');
+            const auto s_Close = s_Line.find(']');
+
+            if (s_Open != std::string::npos && s_Close != std::string::npos && s_Close > s_Open)
+                s_Mods += (s_Mods.empty() ? "" : ", ") + s_Line.substr(s_Open + 1, s_Close - s_Open - 1);
         }
 
-        std::filesystem::rename(m_LogPath, s_Dir + "HitmanCoop-previous.log", s_Error);
-
-        std::ofstream(m_LogPath, std::ios::trunc) << "HITMAN Co-op " << c_ModVersion << ", game " << m_GameVersion << '\n';
-        m_World.SetTrace([this](const std::string& p_Line) { AppendLog(p_Line); });
-        CrashTrace::Install(s_Dir + "HitmanCoop-crash.txt");
+        CoopLog::Fmt(LogLevel::Info, "start", "mods.ini turns on: %s", s_Mods.empty() ? "(no mods.ini)" : s_Mods.c_str());
     }
+
+    CoopLog::Fmt(LogLevel::Info, "start", "game patches: %d of %d (%s)", p_Patches, CrashGuards::Count(), CrashGuards::Report().c_str());
+    // The game's own settings file, as the setup tuned it (made again here after a game update).
+    CoopLog::Fmt(LogLevel::Info, "start", "game files: %s", GameTweaks::CheckAndHeal(s_Game).c_str());
+    CoopLog::Fmt(LogLevel::Info, "start", "crash reports: %zu of the mod's functions can be named%s, a crash dump is %s", CrashTrace::SymbolCount(),
+        CrashTrace::SymbolCount() ? "" : " (HitmanCoop.sym is missing: addresses only)", m_CrashDump ? "kept beside the report" : "off");
+
+    // The settings as saved (HitmanCoop.ini), one line.
+    {
+        std::ifstream s_Ini(ModsFolder() + "HitmanCoop.ini");
+        std::string s_Line, s_Section, s_All;
+
+        while (std::getline(s_Ini, s_Line) && s_All.size() < 3000) {
+            // (The file may start with a UTF-8 byte order mark: its first section was lost.)
+            if (s_All.empty() && s_Section.empty() && s_Line.rfind("\xEF\xBB\xBF", 0) == 0)
+                s_Line.erase(0, 3);
+
+            while (!s_Line.empty() && (s_Line.back() == '\r' || s_Line.back() == ' '))
+                s_Line.pop_back();
+
+            if (s_Line.empty() || s_Line[0] == ';' || s_Line[0] == '#')
+                continue;
+
+            if (s_Line[0] == '[') {
+                s_Section = s_Line.substr(1, s_Line.find(']') - 1);
+                continue;
+            }
+
+            s_All += (s_All.empty() ? "" : ", ") + s_Section + "." + s_Line;
+        }
+
+        CoopLog::Fmt(LogLevel::Info, "start", "settings: %s", s_All.empty() ? "(defaults)" : s_All.c_str());
+    }
+
+    if (!m_PreviousCrash.empty())
+        CoopLog::Fmt(LogLevel::Warn, "start", "the last session ended in a crash: %s", m_PreviousCrash.c_str());
+}
+
+std::string HitmanCoop::FileVersionOf(const std::string& p_Path) {
+    DWORD s_Handle = 0;
+    const DWORD s_Size = GetFileVersionInfoSizeA(p_Path.c_str(), &s_Handle);
+
+    if (s_Size == 0)
+        return std::filesystem::exists(p_Path) ? "(no version)" : "(missing)";
+
+    std::vector<uint8_t> s_Data(s_Size);
+    VS_FIXEDFILEINFO* s_Info = nullptr;
+    UINT s_InfoLen = 0;
+
+    if (!GetFileVersionInfoA(p_Path.c_str(), 0, s_Size, s_Data.data()) ||
+        !VerQueryValueA(s_Data.data(), "\\", reinterpret_cast<void**>(&s_Info), &s_InfoLen) || !s_Info)
+        return "(no version)";
+
+    char s_Version[64];
+    std::snprintf(s_Version, sizeof(s_Version), "v%u.%u.%u.%u", HIWORD(s_Info->dwFileVersionMS), LOWORD(s_Info->dwFileVersionMS),
+        HIWORD(s_Info->dwFileVersionLS), LOWORD(s_Info->dwFileVersionLS));
+    return s_Version;
+}
+
+std::string HitmanCoop::GameFolder() {
+    std::string s_Mods = ModsFolder();
+    return s_Mods.substr(0, s_Mods.size() - std::string("mods\\").size());
 }
 
 void HitmanCoop::OnEngineInitialized() {
@@ -206,9 +520,19 @@ void HitmanCoop::OnEngineInitialized() {
     // Checked once the engine is up: some of these (the type registry) only exist from then on.
     m_Unsupported = MissingEngineParts();
 
+    // A build made for another game version finds every function but reads NPCs, 47 and items at
+    // the wrong places (players on 3.280 crashed with the 3.290 build the moment the partner's
+    // stand-in appeared). An unknown version isn't held against it.
+    if (!m_AnyGameVersion && m_GameVersion != "unknown" && !m_GameVersion.starts_with(std::string(c_GameTarget) + "."))
+        m_WrongGame = "This HITMAN Co-op build is for game " + std::string(c_GameTarget) + ".x, and this game is " + m_GameVersion +
+            ". Co-op stays off so nothing can break: get the HITMAN Co-op build for your game version, or update the game.";
+
+    if (!m_WrongGame.empty() && m_Unsupported.empty())
+        m_Unsupported = "the build for this game version";
+
     if (!m_Unsupported.empty()) {
-        Logger::Error("[HitmanCoop] This game build lacks what co-op needs ({}); co-op stays off.", m_Unsupported);
-        m_World.Notify("HITMAN Co-op can't run on this game version (" + m_GameVersion + "). Update the game and the mod.");
+        Logger::Error("[HitmanCoop] Co-op stays off: {}", UnsupportedText());
+        m_World.Notify(UnsupportedText());
         m_Test.Trace("engine check: MISSING " + m_Unsupported);
     }
     else
@@ -234,6 +558,14 @@ double HitmanCoop::Now() {
     LARGE_INTEGER s_Counter;
     QueryPerformanceCounter(&s_Counter);
     return static_cast<double>(s_Counter.QuadPart) / s_Frequency;
+}
+
+std::string HitmanCoop::UnsupportedText() const {
+    if (!m_WrongGame.empty())
+        return m_WrongGame;
+
+    return "HITMAN Co-op can't run on this game version (" + m_GameVersion + "): it lacks " + m_Unsupported +
+        ". Update the game and the mod.";
 }
 
 std::string HitmanCoop::MissingEngineParts() {
@@ -303,12 +635,32 @@ void HitmanCoop::LoadSettings() {
     if (m_LocalBubble > 7.99f && m_LocalBubble < 8.01f)
         m_LocalBubble = 25.f;
 
+    // The old Artur build persisted auto_update=false, even though updates were disabled.
+    // Use a new key so upgrading players get the new signed channel by default once.
+    m_AutoUpdate = GetSettingBool("general", "artur_signed_auto_update", true);
+    m_AnyGameVersion = GetSettingBool("general", "any_game_version", false);
+
+    // How much the log says (Log.h): info, or debug/trace ("verbose") for chasing a bug.
+    if (coop::LogLevel s_Level; coop::ParseLogLevel(GetSetting("log", "level", "info").c_str(), s_Level))
+        m_LogLevel = static_cast<int>(s_Level);
+
+    m_LogAddresses = GetSettingBool("log", "show_addresses", false);
+    CoopLog::SetLevel(static_cast<coop::LogLevel>(m_LogLevel));
+    CoopLog::SetShowAddresses(m_LogAddresses);
+    // Only to test an update from another place. Normally the repo's updates branch (GitHub's raw
+    // file server), then the latest release: on a player's connection one of the addresses of the
+    // file server GitHub sends release downloads to never answered, and Windows' HTTP always took it.
+    // The separate builds (for older game versions) have their own update file, so they never
+    // update themselves to the build for another game version.
+    m_UpdateUrl = GetSetting("general", "update_url", "https://raw.githubusercontent.com/shadow159043/hitman-coop/updates/" + UpdateFileFor(m_GameVersion))
+                      .c_str();
     m_ShowToasts = GetSettingBool("general", "show_notifications", true);
     m_ShowHud = GetSettingBool("general", "show_hud", true);
     m_ShowNameTag = GetSettingBool("general", "show_name_tag", true);
     m_ShowMarks = GetSettingBool("general", "show_marks", true);
     m_PauseTogether = GetSettingBool("general", "pause_together", true);
     m_AutoReconnect = GetSettingBool("general", "auto_reconnect", true);
+    m_HidePartnerKills = GetSettingBool("online", "hide_partner_kills_from_game", false);
     m_ShowRadar = GetSettingBool("general", "show_radar", true);
     m_Sounds = GetSettingBool("general", "sounds", true);
     m_Hotkeys = GetSettingBool("general", "hotkeys", true);
@@ -432,6 +784,13 @@ void HitmanCoop::SaveSettings() {
     SetSettingBool("general", "show_notifications", m_ShowToasts);
     SetSettingBool("general", "show_hud", m_ShowHud);
     SetSettingBool("general", "show_name_tag", m_ShowNameTag);
+    SetSettingBool("general", "artur_signed_auto_update", m_AutoUpdate);
+    {
+        char s_Level[16];
+        strncpy_s(s_Level, ToLowerCopy(coop::LogLevelName(static_cast<coop::LogLevel>(m_LogLevel))).c_str(), _TRUNCATE);
+        SetSetting("log", "level", s_Level);
+    }
+    SetSettingBool("log", "show_addresses", m_LogAddresses);
     SetSettingBool("general", "show_marks", m_ShowMarks);
     SetSettingBool("general", "pause_together", m_PauseTogether);
     SetSettingBool("general", "auto_reconnect", m_AutoReconnect);
@@ -681,6 +1040,15 @@ bool HitmanCoop::OnTeamEvent(const std::string& p_Name, const std::string& p_Jso
         m_World.Pulse();
         m_World.NotifyAs(SdkWorld::ToastKind::Partner, s_Partner + " asks you to come to them: follow the arrow, or press " +
             (s_RegroupKey.empty() ? std::string("Regroup in CO-OP") : s_RegroupKey) + " to regroup.");
+        return true;
+    }
+
+    if (p_Name == "Coop_Account") {
+        if (const std::string s_Warning = OnlineWatch::CheckPartnerAccount(p_Json, s_Partner); !s_Warning.empty()) {
+            AppendLog("online: " + s_Warning);
+            m_World.NotifyAs(SdkWorld::ToastKind::Warning, s_Warning);
+        }
+
         return true;
     }
 
@@ -1046,7 +1414,7 @@ void HitmanCoop::ProcessCommands(double p_Now) {
         }
 
         if (!m_Unsupported.empty() && s_Command.kind != Command::Kind::Leave) {
-            m_World.Notify("Co-op is off: this game version (" + m_GameVersion + ") lacks " + m_Unsupported + ". Update the game and the mod.");
+            m_World.Notify("Co-op is off. " + UnsupportedText());
             continue;
         }
 
@@ -1144,6 +1512,12 @@ void HitmanCoop::ProcessCommands(double p_Now) {
             }
             else if (coop::ResolveEndpoint(s_Command.address, coop::kDefaultPort, s_Host, s_Error)) {
                 s_Socket = coop::UdpSocket::Open(0, s_Error);
+
+                // A Tailscale address (100.64.0.0/10) with Tailscale off here: it can only time out.
+                // Said now, instead of a "no answer" ten seconds later.
+                if (s_Socket && (s_Host.ip & 0xFFC00000u) == 0x64400000u && coop::LocalTailscaleAddress().empty())
+                    m_World.NotifyAs(SdkWorld::ToastKind::Warning, "That's a Tailscale address, but Tailscale isn't connected on this PC. Start Tailscale "
+                        "(or run the HITMAN Co-op setup, \"Set up Tailscale only\"), then join again.");
             }
 
             if (!s_Socket) {
@@ -1184,6 +1558,58 @@ void HitmanCoop::OnFrameUpdate(const SGameUpdateEvent& p_UpdateEvent) {
         if (!m_PreviousCrash.empty())
             m_World.NotifyAs(SdkWorld::ToastKind::Warning, "The game closed with an error last time. If co-op was running, "
                 "please send " + m_PreviousCrash + " to the mod's author.");
+
+        // Steam and IOI's servers, watched from here on (the game has both up by now).
+        OnlineWatch::Start();
+
+        // The files the last update replaced, and what's new in it if this is its first start.
+        const std::string s_Game = GameFolder();
+        Updater::CleanUp(s_Game);
+
+        if (std::string s_Notes; Updater::TakeWhatsNew(s_Game, c_ModVersion, s_Notes)) {
+            {
+                std::lock_guard s_Lock(m_StatusMutex);
+                m_WhatsNew = s_Notes;
+            }
+
+            m_World.Notify(std::string("HITMAN Co-op updated itself to ") + c_ModVersion + ". What's new is on screen, and in CO-OP > About.");
+            AppendLog(std::string("update: now ") + c_ModVersion);
+            m_Test.Trace(std::string("update: now ") + c_ModVersion + ", what's new: " + s_Notes.substr(0, 200));
+        }
+
+        if (m_AutoUpdate && c_ArturSignedUpdatesAvailable) {
+            // The build for another game version installed: the right one (same version number,
+            // other files) comes in with the next start.
+            const bool s_Reinstall = !m_WrongGame.empty();
+
+            if (s_Reinstall)
+                CoopLog::Info("update", "the build for another game version is installed: getting the one for " + m_GameVersion);
+
+            m_Updater.Start(s_Game, c_ModVersion, m_UpdateUrl,
+                "https://github.com/shadow159043/hitman-coop/releases/latest/download/" + UpdateFileFor(m_GameVersion), s_Reinstall);
+        }
+    }
+
+    // An update found and downloaded (or not): told once.
+    if (const Updater::Status s_Update = m_Updater.Get(); s_Update.state != m_UpdateTold) {
+        m_UpdateTold = s_Update.state;
+        const std::string s_Line = "update: " + std::string(s_Update.state == Updater::State::Checking ? "checking" :
+            s_Update.state == Updater::State::UpToDate ? "up to date (latest " + s_Update.version + ")" :
+            s_Update.state == Updater::State::Staged ? s_Update.version + " downloaded, used from the next start" :
+            s_Update.state == Updater::State::Failed ? "failed: " + s_Update.error : "idle");
+        AppendLog(s_Line);
+        m_Test.Trace(s_Line);
+
+        if (s_Update.state == Updater::State::Staged)
+            m_World.Notify("HITMAN Co-op " + s_Update.version + " is downloaded. It starts by itself the next time you start the game.");
+
+        // A new version that couldn't be put in place (a game folder Windows won't let it write to):
+        // the player gets it by hand. Not being online, or a file not matching yet (GitHub's file
+        // server catching up for a few minutes after a release), is no news: tried again next start.
+        if (s_Update.state == Updater::State::Failed && !s_Update.version.empty() &&
+            (s_Update.error.rfind("can't write", 0) == 0 || s_Update.error.rfind("can't replace", 0) == 0))
+            m_World.NotifyAs(SdkWorld::ToastKind::Warning, "HITMAN Co-op " + s_Update.version + " is out, but couldn't install itself (" + s_Update.error +
+                "). Get it from the mod's GitHub page.");
     }
 
     ProcessCommands(s_Now);
@@ -1222,11 +1648,14 @@ void HitmanCoop::OnFrameUpdate(const SGameUpdateEvent& p_UpdateEvent) {
         s_Config.npcScanRate = m_SlowMode ? 15.0 : 30.0;
 
         // How much NPC detail goes to the partner (Settings): less for a slow connection, more for a LAN.
+        // (These overrode Session's own defaults every frame: 0.13.94's "32 NPCs within 50 m" against
+        // moonwalking never reached a game, which kept posing 10 within 35 m. Normal is that now; the
+        // most is what PoseHook has room for, 40.)
         static constexpr struct {
             double npc, pose;
             size_t poses;
             float range;
-        } c_Quality[] = { { 1.0 / 10.0, 1.0 / 8.0, 5, 25.f }, { 1.0 / 15.0, 1.0 / 12.0, 10, 35.f }, { 1.0 / 20.0, 1.0 / 15.0, 14, 45.f } };
+        } c_Quality[] = { { 1.0 / 10.0, 1.0 / 8.0, 16, 35.f }, { 1.0 / 15.0, 1.0 / 12.0, 32, 50.f }, { 1.0 / 20.0, 1.0 / 15.0, 40, 60.f } };
         const auto& s_Quality = c_Quality[std::clamp(m_SyncQualitySetting.load(), 0, 2)];
         s_Config.npcInterval = s_Quality.npc;
         s_Config.npcPoseInterval = s_Quality.pose;
@@ -1236,8 +1665,13 @@ void HitmanCoop::OnFrameUpdate(const SGameUpdateEvent& p_UpdateEvent) {
 
         const float s_Dt = static_cast<float>(std::min(p_UpdateEvent.m_RealTimeDelta.ToSeconds(), 0.25));
 
+        // NPCs in earshot of something our 47 threw are ours to run while they look into it.
+        for (const uint64_t s_Id : m_World.TakeNoiseClaims())
+            m_Session->ClaimNpc(s_Id, s_Now, 30.0, "heard something our 47 threw");
+
         // Whatever goes wrong in the session (out of memory, a bug), the game goes on without it.
         try {
+            const BlackBox::Scope s_Section("the session's tick");
             m_Session->Tick(s_Now, s_Dt);
         }
         catch (const std::exception& s_Error) {
@@ -1272,6 +1706,30 @@ void HitmanCoop::OnFrameUpdate(const SGameUpdateEvent& p_UpdateEvent) {
     UpdateReconnect(s_Now);
     m_World.UpdateMarks();
 
+    // The game's own online connections (Steam, IOI's servers): drops logged, and told during co-op.
+    const bool s_Connected = m_FrameStatus.state == coop::SessionState::Connected;
+    OnlineWatch::Update(s_Now, s_Connected, [this](const std::string& p_Line) { AppendLog(p_Line); },
+        [this](const std::string& p_Text) { m_World.NotifyAs(SdkWorld::ToastKind::Warning, p_Text); });
+
+    // Which Steam account this PC uses (a salted hash), once a connection: the partner's mod warns
+    // both if it is the same one (Steam signs one of two PCs on one account out, at random times).
+    if (!s_Connected)
+        m_AccountSent = false;
+    else if (!m_AccountSent && m_Session) {
+        if (const std::string s_Account = OnlineWatch::AccountMessage(); !s_Account.empty()) {
+            m_Session->SendMissionEvent("Coop_Account", s_Account);
+            m_AccountSent = true;
+        }
+    }
+
+    // Tailscale started (or stopped) after the game: its address in the CO-OP menu follows.
+    if ((!m_Session || !m_Session->Active()) && s_Now >= m_NextTailscaleCheck) {
+        m_NextTailscaleCheck = s_Now + 15.0;
+        const std::string s_Tailscale = coop::LocalTailscaleAddress();
+        std::lock_guard s_StatusLock(m_StatusMutex);
+        m_TailscaleAddress = s_Tailscale;
+    }
+
     // Only the partner's map, notebook or phone (not their pause menu): ours goes on, if asked.
     {
         const int s_Menu = m_FrameStatus.peerStateKnown ? m_FrameStatus.peerState.menu - 1 : -1;
@@ -1284,6 +1742,12 @@ void HitmanCoop::OnFrameUpdate(const SGameUpdateEvent& p_UpdateEvent) {
     m_World.UpdatePauseCap();
     UpdateWaitForPartner(s_Now, m_FrameStatus);
     m_World.UpdateRestart(m_LevelState == static_cast<int>(ZLevelManager::EGameState::EGS_Playing));
+
+    // What the world tells the partner itself (a body's clothes taken, an item dropped). Kept while
+    // not synced (the partner loading in): taken then, a stripped body stayed dressed for them.
+    if (m_FrameStatus.synced && m_Session)
+        for (auto& [s_Name, s_Text] : m_World.TakeOutgoingEvents())
+            m_Session->SendMissionEvent(s_Name, s_Text);
 
     // Shots that hit the partner's stand-in: both are told, once in a while.
     if (const int s_Hits = m_FriendlyHits.exchange(0); s_Hits > 0 && s_Now - m_FriendlyToldAt > 6.0 && m_FrameStatus.synced) {
@@ -1305,6 +1769,9 @@ void HitmanCoop::OnFrameUpdate(const SGameUpdateEvent& p_UpdateEvent) {
 
     if (m_CodeCopied.exchange(false))
         m_World.Notify("Join code copied: paste it to your friend.");
+
+    if (m_TailscaleCopied.exchange(false))
+        m_World.Notify("Your Tailscale address is copied: send it to your partner, they JOIN with it.");
 
     // What the partner holds, in the stand-in's hands (told on a change: the test channel's own stays).
     {
@@ -1340,13 +1807,15 @@ void HitmanCoop::OnFrameUpdate(const SGameUpdateEvent& p_UpdateEvent) {
         }
     }
 
-    m_ModCostMs = static_cast<float>(m_ModCostMs * 0.95 + (Now() - s_Now) * 1000.0 * 0.05);
+    const double s_ModMs = (Now() - s_Now) * 1000.0;
+    m_ModCostMs = static_cast<float>(m_ModCostMs * 0.95 + s_ModMs * 0.05);
+    LogPerf(s_Now, s_FrameGap, s_ModMs);
 
-    // A heartbeat in the trace, so the last line before a crash says when it happened.
+    // A heartbeat in the trace (not the log), so the last line before a crash says when it happened.
     if (m_Test.Enabled() && s_Now >= m_NextHeartbeat) {
         m_NextHeartbeat = s_Now + 1.0;
         const auto s_State = m_Session ? coop::SessionStateName(m_Session->Status().state) : "Idle";
-        m_Test.Trace("beat " + std::to_string(static_cast<long long>(s_Now)) + " " + s_State + " partner " +
+        m_Test.Raw("beat " + std::to_string(static_cast<long long>(s_Now)) + " " + s_State + " partner " +
             m_World.DescribePartner());
     }
 }
@@ -1451,6 +1920,14 @@ void HitmanCoop::RunTestChannel(double p_Now) {
             m_Test.Trace(m_World.DescribeActorAi());
         else if (s_Verb == "partner")
             m_World.SetPartnerEnabled(s_Arg != "off");
+        else if (s_Verb == "outfitunknown")
+            m_World.SetOutfitUnknownTest(s_Arg != "off");
+        else if (s_Verb == "myoutfit") {
+            coop::OutfitDesc s_Outfit;
+            const bool s_Ok = m_World.GetLocalOutfit(s_Outfit);
+            m_Test.Trace("myoutfit: " + std::string(s_Ok ? "" : "can't be read ") + s_Outfit.repositoryId + " charset " + std::to_string(s_Outfit.charset) +
+                " variation " + std::to_string(s_Outfit.variation));
+        }
         else if (s_Verb == "mirror")
             m_World.SetMirror(s_Arg == "on");
         else if (s_Verb == "victimtest")
@@ -1519,16 +1996,61 @@ void HitmanCoop::RunTestChannel(double p_Now) {
             m_Test.Trace(m_World.DoorState());
         else if (s_Verb == "itemtake" || s_Verb == "itemback")
             m_Test.Trace(m_World.ItemTest(s_Verb == "itemtake"));
+        else if (s_Verb == "itemdump")
+            m_Test.Trace(m_World.ItemOwnersTest());
         else if (s_Verb == "helditems")
             m_Test.Trace(m_World.HeldItemsTest());
         else if (s_Verb == "standinitem")
             m_Test.Trace(m_World.StandInItemTest(s_Arg));
+        else if (s_Verb == "script")
+            m_Test.Trace(m_World.ScriptTest(s_Arg));
+        else if (s_Verb == "pins")
+            m_Test.Trace(m_World.PinTest(s_Arg));
+        else if (s_Verb == "goto")
+            m_Test.Trace(m_World.GotoTest(s_Arg));
+        // blackbox: the flight recorder written beside the trace file, and how much it holds.
+        else if (s_Verb == "blackbox") {
+            const bool s_Saved = BlackBox::Save(m_Test.Path() + ".blackbox.txt");
+            char s_Text[160];
+            std::snprintf(s_Text, sizeof(s_Text), "blackbox: %zu entries over %.0f s, %s; crash report names %zu functions", BlackBox::Count(),
+                BlackBox::Span(), s_Saved ? "saved" : "NOT saved", CrashTrace::SymbolCount());
+            m_Test.Trace(s_Text);
+        }
+        // guardtest: a fault inside a guarded call, as the game faulting under the mod would be.
+        else if (s_Verb == "guardtest") {
+            const int s_Before = CrashTrace::CaughtFaults();
+            bool s_Caught = false;
+            {
+                const BlackBox::Guarded s_Guard("the test channel's guardtest");
+                s_Caught = FaultForTest();
+            }
+            m_Test.Trace(std::string("guardtest: ") + (s_Caught && CrashTrace::CaughtFaults() == s_Before + 1 ? "caught and reported" : "NOT caught"));
+        }
         else if (s_Verb == "body")
             m_Test.Trace(m_World.BodyTest(s_Arg));
+        else if (s_Verb == "bodymove")
+            m_Test.Trace(m_World.BodyMoveTest(s_Arg));
+        else if (s_Verb == "bodyprobe")
+            m_Test.Trace(m_World.BodyProbeStart(s_Arg));
+        // pausescreen: the partner's pause screen for 6 s, as it looks (no pause).
+        else if (s_Verb == "verifysig") {
+            // Test: "verifysig <file>": is <file>.sig its signature by the update key?
+            std::ifstream s_File(s_Arg, std::ios::binary), s_Sig(s_Arg + ".sig", std::ios::binary);
+            const std::string s_Text((std::istreambuf_iterator<char>(s_File)), {}), s_SigText((std::istreambuf_iterator<char>(s_Sig)), {});
+            m_Test.Trace(std::string("verifysig: ") + (Updater::VerifySignature(s_Text, s_SigText) ? "signed" : "NOT signed"));
+        }
+        else if (s_Verb == "online")
+            m_Test.Trace("online: " + OnlineWatch::Describe() + " | account " + (OnlineWatch::AccountMessage().empty() ? "unknown" : "known"));
+        else if (s_Verb == "pausescreen") {
+            m_PausePreviewUntil = Now() + 6.0;
+            m_Test.Trace("pausescreen: shown for 6 s");
+        }
         else if (s_Verb == "victimsend")
             m_World.SetVictimSend(s_Arg != "off");
         else if (s_Verb == "behind")
             m_Test.Trace("behind: " + m_World.StepBehindNearestNpc(s_Arg.empty() ? 0.7f : std::stof(s_Arg)));
+        else if (s_Verb == "itemsync")
+            m_Test.Trace(m_World.ItemSyncTest());
         else if (s_Verb == "calmedfrom")
             m_Test.Trace("calmed from: " + CrashGuards::CalmedFrom());
         else if (s_Verb == "brainless")
@@ -1648,10 +2170,19 @@ void HitmanCoop::RunTestChannel(double p_Now) {
     s_Json << ",\"partnerActor\":\"" << TestChannel::Escape(m_World.DescribePartner()) << "\"";
     s_Json << ",\"shared\":\"puppets " << s_Status.npcsPuppeted << ", client owns " << s_Status.npcsOwnedByClient << ", " <<
         TestChannel::Escape(s_Status.ownerCheck) << "\"";
+    // The same as numbers, and the last sync check, for test scripts.
+    s_Json << ",\"npc\":{\"puppets\":" << s_Status.npcsPuppeted << ",\"clientOwns\":" << s_Status.npcsOwnedByClient
+           << ",\"guardPuppets\":" << CrashGuards::PuppetCount() << ",\"skippedThinks\":" << CrashGuards::SkippedThinks()
+           << ",\"check\":{\"at\":" << s_Status.npcCheck.at << ",\"compared\":" << s_Status.npcCheck.compared << ",\"same\":" << s_Status.npcCheck.same
+           << ",\"fewMetres\":" << s_Status.npcCheck.fewMetres << ",\"outOfPlace\":" << s_Status.npcCheck.outOfPlace << ",\"onlyTheirs\":"
+           << s_Status.npcCheck.onlyTheirs << ",\"onlyOurs\":" << s_Status.npcCheck.onlyOurs << ",\"worst\":\""
+           << TestChannel::Escape(s_Status.npcCheck.worst) << "\"}}";
+    s_Json << ",\"log\":{\"level\":\"" << coop::LogLevelName(CoopLog::Level()) << "\",\"path\":\"" << TestChannel::Escape(CoopLog::Path()) << "\"}";
     s_Json << ",\"pose\":{\"hooked\":" << (PoseHook::Installed() ? "true" : "false") << ",\"calls\":" << PoseHook::Calls()
            << ",\"sourceBones\":" << PoseHook::SourceBoneCount() << ",\"targetBones\":" << PoseHook::TargetBoneCount() << ",\"received\":" << s_Status.posesReceived
            << ",\"partnerPosed\":" << (m_World.PartnerPosed() ? "true" : "false") << "}";
     s_Json << ",\"victims\":\"" << TestChannel::Escape(m_World.DescribeVictims()) << "\"";
+    s_Json << ",\"bodies\":\"" << TestChannel::Escape(m_World.DescribeMovedBodies()) << "\"";
     s_Json << ",\"v10\":{\"peerKnown\":" << (s_Status.peerStateKnown ? "true" : "false") << ",\"peerThreat\":" << int(s_Status.peerState.threat)
            << ",\"peerFlags\":" << int(s_Status.peerState.flags) << ",\"peerMenu\":" << int(s_Status.peerState.menu)
            << ",\"peerKills\":" << s_Status.peerState.stats.kills << ",\"ourKills\":" << m_Tally.State().stats.kills
@@ -1756,11 +2287,16 @@ void HitmanCoop::PublishStatus() {
     m_OverlayReady = s_Now - m_PartnerAskedReadyAt < 60.0 ? 2 : s_Now - m_ReadyAskedAt < 30.0 ? 1 : 0;
     m_OverlayPartnerStill = s_Now - m_PartnerMovedAt;
     m_OverlayCanReconnect = m_LastJoin.has_value() && s_Status.state == coop::SessionState::Failed;
+    m_OverlayPartnerHold = m_World.IsInScene() && m_World.WantPartnerHold() && GamePause::Available();
+    m_OverlayOwnMenu = m_World.IsInScene() && GamePause::MenuOpen();
+    m_OverlayPauseFor = m_World.PartnerPausedFor();
+    m_OverlayPauseLeft = SdkWorld::c_PauseHoldMax - m_OverlayPauseFor;
     m_InMission = m_World.IsInScene();
 
     if (s_Now - m_StandInTextAt > 0.5) {
         m_StandInTextAt = s_Now;
         m_StandInText = m_World.DescribeStandIn();
+        m_ItemText = m_World.IsInScene() ? m_World.ItemSyncTest() : std::string();
     }
     m_RelayStatus.reset();
 
@@ -1866,6 +2402,23 @@ void HitmanCoop::OnMissionRestarted(const std::string& p_Scene) {
     }
 }
 
+// Every output pin any entity signals, on whatever thread: all but the level's interactions are
+// turned away at once (WorldScript.h).
+DEFINE_PLUGIN_DETOUR(HitmanCoop, bool, OnSignalOutputPin, ZEntityRef p_Entity, uint32_t p_PinId, const ZObjectRef& p_Data) {
+    const bool s_HasData = !p_Data.IsEmpty();
+    const char* s_Type = s_HasData && p_Data.GetTypeID() && p_Data.GetTypeID()->GetTypeInfo() ? p_Data.GetTypeID()->GetTypeInfo()->pszTypeName : nullptr;
+    const WorldScript::ValueKind s_Kind = s_HasData ? WorldScript::KindOf(s_Type) : WorldScript::Value_None;
+    uint32_t s_Bits = 0;
+
+    if (s_Kind == WorldScript::Value_Bool)
+        s_Bits = *static_cast<const uint8_t*>(p_Data.GetData()) ? 1 : 0;
+    else if (s_Kind != WorldScript::Value_None && s_Kind != WorldScript::Value_Other && p_Data.GetData())
+        std::memcpy(&s_Bits, p_Data.GetData(), sizeof(s_Bits));
+
+    WorldScript::OnOutputPin(p_Entity.m_pObj, p_PinId, s_Kind, s_Bits, s_Type);
+    return HookResult<bool>(HookAction::Continue());
+}
+
 DEFINE_PLUGIN_DETOUR(HitmanCoop, void, OnClearScene, ZEntitySceneContext* th, bool p_FullyUnloadScene) {
     std::lock_guard s_Lock(m_SessionMutex);
 
@@ -1875,11 +2428,14 @@ DEFINE_PLUGIN_DETOUR(HitmanCoop, void, OnClearScene, ZEntitySceneContext* th, bo
     // A restart already told (by its ContractFailed event) is not looked for again.
     const bool s_InMission = m_World.IsInScene() && SdkWorld::IsMissionScene(m_World.CurrentScene().scene) && !m_RestartTold;
     m_RestartTold = false;
-    m_ClearedMission = s_InMission && p_FullyUnloadScene ? m_World.CurrentScene().scene : std::string();
+    // Either way the partner is told only once we are back in this same mission (OnFrameUpdate
+    // for one rebuilt in place, OnLoadScene for one loaded again). Leaving for the menus clears a
+    // mission just like a restart does, and telling it here restarted a guest's mission, and took
+    // their game down, when the host only left (0.13.95).
+    m_ClearedMission = s_InMission ? m_World.CurrentScene().scene : std::string();
     m_Test.Trace(std::string("scene: clearing (") + (p_FullyUnloadScene ? "full" : "for a rebuild") + ")");
-
-    if (s_InMission && !p_FullyUnloadScene)
-        OnMissionRestarted(m_World.CurrentScene().scene);
+    BlackBox::Note("scene", "clearing %s (%s), in mission %d", m_World.CurrentScene().scene.c_str(), p_FullyUnloadScene ? "full" : "rebuild",
+        s_InMission ? 1 : 0);
 
     if (m_Session && m_World.IsInScene())
         m_Session->OnLocalSceneUnloaded();
@@ -1901,7 +2457,25 @@ DEFINE_PLUGIN_DETOUR(HitmanCoop, bool, OnActorHit, IBaseCharacter* th, const SHi
         return HookResult<bool>(HookAction::Return(), false);
     }
 
+    // Our 47's hit (a shot, a thrown item, a blow) on an NPC the partner's game runs: here it was a
+    // puppet with its AI off, and a knock-out did nothing (seen in tests: an NPC that ignored both a
+    // knock-out and a kill). Ours to run from this moment, before the game decides the reaction.
+    if (m_World.HitByOurPlayer(&p_HitInfo)) {
+        std::lock_guard s_Lock(m_SessionMutex);
+
+        if (m_Session && m_FrameStatus.synced)
+            if (const uint64_t s_Id = m_World.NpcIdOf(static_cast<ZActor*>(th)); s_Id != 0)
+                m_Session->ClaimNpc(s_Id, Now());
+    }
+
     return HookResult<bool>(HookAction::Continue());
+}
+
+// A body stripped (or dressed) in our game: the partner's game does the same (see SdkWorld).
+DEFINE_PLUGIN_DETOUR(HitmanCoop, void, OnActorSetOutfit, ZActor* th, TEntityRef<ZGlobalOutfitKit> p_Outfit, int32_t p_Charset,
+    int32_t p_Variation, bool p_Nude) {
+    m_World.OnActorOutfitSet(th, p_Outfit.m_pInterfaceRef, p_Charset, p_Variation, p_Nude);
+    return HookResult<void>(HookAction::Continue());
 }
 
 DEFINE_PLUGIN_DETOUR(HitmanCoop, void, OnSetGameTension, ZKnowledge* th, EGameTension p_Tension) {
@@ -1945,6 +2519,10 @@ DEFINE_PLUGIN_DETOUR(
 
         // An NPC we killed only to match the partner's game: theirs scores it, ours must not.
         // Its kill, and witnesses or finds of its body: those were the partner's, in their game.
+        // Not counted in our tally or told to the partner, but the game itself gets the event: it
+        // numbers its online events (p_EventIndex) and syncs them with IOI's servers, and events
+        // held back from it are the first suspect for the "signed in on another computer" errors
+        // players got since 0.13. [online] hide_partner_kills_from_game = true is the old way.
         static const std::unordered_set<std::string> c_PartnerKillEvents = {
             "Kill", "NoticedKill", "MurderedBodySeen", "DeadBodySeen", "BodyFound", "AccidentBodyFound", "Witnesses", "Pacify",
             "Noticed_Pacified"
@@ -1952,17 +2530,39 @@ DEFINE_PLUGIN_DETOUR(
 
         if (c_PartnerKillEvents.contains(s_Name) && m_World.IsPartnerKillEvent(s_Json)) {
             // Later events (NoticedKill) name the NPC only by its repository id, given here.
-            if (const size_t s_At = s_Json.find("\"RepositoryId\":\""); (s_Name == "Kill" || s_Name == "Pacify") && s_At != std::string::npos) {
+            if (s_Name == "Kill" || s_Name == "Pacify") {
+                const size_t s_At = s_Json.find("\"RepositoryId\":\"");
                 const size_t s_Start = s_At + 16;
-                m_World.AddPartnerKillKey(s_Json.substr(s_Start, s_Json.find('"', s_Start) - s_Start));
+                m_World.AddPartnerKillKey(s_At == std::string::npos ? std::string() : s_Json.substr(s_Start, s_Json.find('"', s_Start) - s_Start), s_Json);
             }
 
-            m_Test.Trace("event: " + s_Name + " of a partner's victim, dropped");
-            return HookResult<void>(HookAction::Return());
+            if (m_HidePartnerKills) {
+                m_Test.Trace("event: " + s_Name + " of a partner's victim, dropped");
+                return HookResult<void>(HookAction::Return());
+            }
+
+            m_Test.Trace("event: " + s_Name + " of a partner's victim, not counted (the game still gets it)");
+            return HookResult<void>(HookAction::Continue());
         }
 
         if (s_Name == "Pacify" || s_Name == "Kill")
             m_World.NotePacified(s_Json, s_Name == "Pacify");
+
+        // Every event of our own game, in the flight recorder (the start of it: who, what).
+        {
+            const size_t s_Value = s_Json.find("\"Value\"");
+            BlackBox::Note("event", "%s %.150s", s_Name.c_str(), s_Value == std::string::npos ? "" : s_Json.c_str() + s_Value);
+        }
+
+        // Our game's AI started something with an NPC (it comes to look at a noise, it spotted
+        // our 47, it turned sick): that goes on in our game only, so ours runs the NPC for the
+        // length of it. Run by the partner's game it stood where it was, a "?" over its head.
+        if (s_Connected && m_Session->Synced() && !c_PartnerKillEvents.contains(s_Name) && s_Name != "Kill" && s_Name != "Pacify") {
+            for (const uint64_t s_Id : m_World.NpcsNamedIn(s_Json)) {
+                const std::string s_Why = "is in our game's " + s_Name;
+                m_Session->ClaimNpc(s_Id, Now(), 40.0, s_Why.c_str());
+            }
+        }
 
         // Ours to count and tell: not a kill made only to mirror the partner's game, nor one of the
         // game's hidden bookkeeping challenges.
@@ -1997,7 +2597,7 @@ DEFINE_PLUGIN_DETOUR(
         }
 
         if (s_Name.find("Kill") != std::string::npos || s_Name.find("Pacif") != std::string::npos)
-            m_Test.Trace("event: " + s_Name + (s_Name == "Pacify" ? " " + s_Json.substr(std::min<size_t>(s_Json.size(), 200)) : std::string()));
+            m_Test.Trace("event: " + s_Name + (s_Name == "Pacify" ? " " + s_Json.substr(0, std::min<size_t>(s_Json.size(), 200)) : std::string()));
         else
             m_Test.Trace("event: " + s_Name + " " + s_Json.substr(0, std::min<size_t>(s_Json.size(), 1500)));
 

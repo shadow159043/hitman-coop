@@ -5,6 +5,8 @@
 /tools/steam-smoke-test.ps1
 /_build*/
 /_dist/
+# Private Artur Edition update signing key: never commit or upload.
+/.signing/
 /core/build*/
 /ref/
 /local/

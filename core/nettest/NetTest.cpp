@@ -18,6 +18,7 @@
 
 #include <cctype>
 #include <deque>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -32,7 +33,8 @@ using namespace coop;
 
 namespace {
 
-constexpr double c_TestLength = 20.0;
+// How long "host"/"join" test once in sync; "--seconds N" changes it (test scripts run longer).
+double g_TestLength = 20.0;
 constexpr double c_KillAt = 5.0;
 constexpr uint64_t c_KillTarget = 0x1003;
 constexpr int c_NpcCount = 8;
@@ -216,6 +218,7 @@ int Run(bool p_Host, const std::string& p_Address, uint16_t p_Port) {
     Vec3 s_LastPartnerPos {};
     double s_WorstRtt = 0.0;
     double s_LastRtt = 0.0;
+    size_t s_LogSeen = 0;
 
     while (true) {
         const double s_Now = Now();
@@ -247,6 +250,17 @@ int Run(bool p_Host, const std::string& p_Address, uint16_t p_Port) {
         s_Session.Tick(s_Now, s_Dt);
         PrintNotes(s_World);
 
+        // The session's own log (hand-overs, the sync check, the health line), for test scripts.
+        for (; s_LogSeen < s_World.logLines.size(); ++s_LogSeen)
+            std::printf("log: %s\n", s_World.logLines[s_LogSeen].c_str());
+
+        if (s_World.logLines.size() > 3000) {
+            s_World.logLines.clear();
+            s_LogSeen = 0;
+        }
+
+        std::fflush(stdout);
+
         if (!WatchRelay(s_Link, p_Host))
             return 1;
 
@@ -270,7 +284,7 @@ int Run(bool p_Host, const std::string& p_Address, uint16_t p_Port) {
         if (s_SyncedAt < 0.0 && s_Session.Synced()) {
             s_SyncedAt = s_Now;
             std::printf("Connected to %s (%s) and in the same mission. Testing for %.0f seconds...\n",
-                        s_Status.peerName.c_str(), s_Status.peerAddress.c_str(), c_TestLength);
+                        s_Status.peerName.c_str(), s_Status.peerAddress.c_str(), g_TestLength);
         }
 
         if (s_World.remoteShown) {
@@ -308,7 +322,7 @@ int Run(bool p_Host, const std::string& p_Address, uint16_t p_Port) {
             }
         }
 
-        if (s_SyncedAt >= 0.0 && s_Now - s_SyncedAt > c_TestLength)
+        if (s_SyncedAt >= 0.0 && s_Now - s_SyncedAt > g_TestLength)
             break;
 
         ShortSleep(4);
@@ -358,10 +372,19 @@ int Run(bool p_Host, const std::string& p_Address, uint16_t p_Port) {
 //   at <x> <y> <z>   stand at that world position, facing the host's 47
 //   line <speed> <length>  walk back and forth on a line in front of the host's 47 (m/s, m)
 //   beside [metres]  stay at the host's side (+ right, - left), facing the way the host faces
+//   nooutfit  send no outfit (as a player whose game can't name it)
 //   echo [seconds] [metres]  replay the host's own path and skeleton pose that many seconds
 //                    later, offset to the side: the host sees their own moves copied
 //   ko     knock out the alive NPC nearest the host's 47 (the host's game should knock it out)
 //   chat <text>  send a chat line         mark  mark the NPC nearest the host's 47 for the host
+//   NPCs the bot runs (the host hands over those nearer the bot: stand it away from the host's 47
+//   with "at", and the host plays them as puppets), for testing NPC sharing in the real game:
+//   npcwalk [m/s]  they walk 3 m out and back along x, standing 2 s at each end
+//   npcstill       they stand where they are (the default)
+//   npcdrop        stop sending them (as a game that doesn't have them): the host should give
+//                  them their own AI back after 5 s
+//   npcback        send them again
+//   npcs           say how many it runs, and the last sync check
 //   quit   leave the session
 int RunBot(const std::string& p_Address, const std::string& p_CommandFile) {
     std::string s_Error;
@@ -384,6 +407,7 @@ int RunBot(const std::string& p_Address, const std::string& p_CommandFile) {
         std::printf("[%8.2f] ", Now());
         std::printf(p_Fmt, p_Args...);
         std::printf("\n");
+        std::fflush(stdout); // read live by test scripts (stdout to a file is buffered)
     };
 
     Log("Bot joining %s. Keys: K kill nearest NPC, S stand, O orbit, Q quit.", p_Address.c_str());
@@ -400,6 +424,7 @@ int RunBot(const std::string& p_Address, const std::string& p_CommandFile) {
     bool s_Beside = false;
     float s_BesideOffset = 1.4f;
     bool s_Echo = false;
+    bool s_NoOutfit = false;
     double s_EchoDelay = 1.0;
     float s_EchoOffset = 1.5f;
     struct EchoFrame { double time; Transform xf; Pose pose; FakeWorld::Victim victim; std::vector<int16_t> skeleton; };
@@ -425,6 +450,14 @@ int RunBot(const std::string& p_Address, const std::string& p_CommandFile) {
 
     double s_LoadUntil = 0.0; // "loadin": the bot's game is loading into the host's mission until then
 
+    // NPCs the bot runs: walking back and forth, standing, or left out of its list.
+    bool s_NpcWalk = false;
+    float s_NpcSpeed = 1.2f;
+    struct BotNpc { Vec3 home; float offset = 0.f; float dir = 1.f; double restUntil = 0.0; };
+    std::unordered_map<uint64_t, BotNpc> s_BotNpcs;
+    std::unordered_map<uint64_t, NpcState> s_Dropped;
+    size_t s_LogSeen = 0;
+
     auto Command = [&](const std::string& p_Command) {
         if (p_Command == "stand") {
             s_Orbit = false;
@@ -434,6 +467,46 @@ int RunBot(const std::string& p_Address, const std::string& p_CommandFile) {
             s_Line = false;
             Log("Standing still.");
         }
+        else if (p_Command.rfind("npcwalk", 0) == 0) {
+            s_NpcWalk = true;
+
+            if (p_Command.size() > 8)
+                s_NpcSpeed = std::max(0.1f, static_cast<float>(std::atof(p_Command.c_str() + 8)));
+
+            Log("NPCs we run walk 3 m out and back at %.1f m/s, standing 2 s at each end.", s_NpcSpeed);
+        }
+        else if (p_Command == "npcstill") {
+            s_NpcWalk = false;
+            Log("NPCs we run stand still.");
+        }
+        else if (p_Command == "npcdrop") {
+            for (auto& [s_Id, s_Npc] : s_World.npcs)
+                if (!s_World.puppets.count(s_Id) && s_Npc.Alive())
+                    s_Dropped[s_Id] = s_Npc;
+
+            for (const auto& [s_Id, s_Npc] : s_Dropped)
+                s_World.npcs.erase(s_Id);
+
+            Log("Not sending %zu NPCs we run any more (as if our game didn't have them).", s_Dropped.size());
+        }
+        else if (p_Command == "npcback") {
+            for (const auto& [s_Id, s_Npc] : s_Dropped)
+                s_World.npcs[s_Id] = s_Npc;
+
+            Log("Sending %zu NPCs again.", s_Dropped.size());
+            s_Dropped.clear();
+        }
+        else if (p_Command == "npcs") {
+            size_t s_Ours = 0;
+
+            for (const auto& [s_Id, s_Npc] : s_World.npcs)
+                s_Ours += s_World.puppets.count(s_Id) ? 0 : 1;
+
+            const auto c = s_Session.Status().npcCheck;
+            Log("NPCs: %zu listed, %zu run by us, %zu puppets, %zu dropped. Last sync check: %zu compared, %zu same, %zu 1-5 m, %zu over 5 m, %zu only the host's, %zu only ours. Worst: %s",
+                s_World.npcs.size(), s_Ours, s_World.puppets.size(), s_Dropped.size(), c.compared, c.same, c.fewMetres, c.outOfPlace, c.onlyTheirs,
+                c.onlyOurs, c.worst.empty() ? "-" : c.worst.c_str());
+        }
         else if (p_Command == "orbit") {
             s_Orbit = true;
             s_Front = false;
@@ -441,6 +514,12 @@ int RunBot(const std::string& p_Address, const std::string& p_CommandFile) {
             s_Beside = s_Echo = false;
             s_Line = false;
             Log("Walking circles around the host.");
+        }
+        else if (p_Command == "nooutfit") {
+            // As a player whose game can't name 47's outfit: none is sent.
+            s_NoOutfit = true;
+            s_World.outfit = {};
+            Log("Sending no outfit.");
         }
         else if (p_Command.rfind("echo", 0) == 0) {
             float s_Delay = 1.f, s_Offset = 1.5f;
@@ -673,7 +752,7 @@ int RunBot(const std::string& p_Address, const std::string& p_CommandFile) {
             FILE* s_File = nullptr;
 
             if (fopen_s(&s_File, p_CommandFile.c_str(), "r") == 0 && s_File) {
-                char s_Text[64] {};
+                char s_Text[512] {};
                 const bool s_Got = std::fgets(s_Text, sizeof(s_Text), s_File) != nullptr;
                 std::fclose(s_File);
                 std::remove(p_CommandFile.c_str());
@@ -687,13 +766,16 @@ int RunBot(const std::string& p_Address, const std::string& p_CommandFile) {
             }
         }
 
-        // Bodies the host moved or put away.
+        // Bodies the host moved or put away, and items it took or let go of.
         for (; s_PeerItemsSeen < s_World.peerItems.size(); ++s_PeerItemsSeen) {
             const auto& s_Item = s_World.peerItems[s_PeerItemsSeen];
 
             if (s_Item.flags & ItemFlag_Body)
                 Log("Host's body %016llx %s at (%.2f, %.2f, %.2f).", static_cast<unsigned long long>(s_Item.id),
                     (s_Item.flags & ItemFlag_BodyHidden) ? "put away" : "moved", s_Item.xf.pos.x, s_Item.xf.pos.y, s_Item.xf.pos.z);
+            else if (!(s_Item.flags & ItemFlag_Door))
+                Log("Host's item %016llx %s at (%.2f, %.2f, %.2f).", static_cast<unsigned long long>(s_Item.id),
+                    s_Item.Taken() ? "taken" : "let go of", s_Item.xf.pos.x, s_Item.xf.pos.y, s_Item.xf.pos.z);
         }
 
         // What the host's game reports alert (its own NPCs' alert levels).
@@ -705,6 +787,44 @@ int RunBot(const std::string& p_Address, const std::string& p_CommandFile) {
                 s_Highest = std::max<int>(s_Highest, s_Alert.tension);
 
             Log("Host reports %zu alert NPCs (highest level %d).", s_LastPeerAlerts, s_Highest);
+        }
+
+        // The NPCs we run: placed by us (walking or standing), from where they were when we got them.
+        if (s_World.inScene) {
+            for (auto& [s_Id, s_Npc] : s_World.npcs) {
+                if (s_World.puppets.count(s_Id) || !s_Npc.Alive()) {
+                    s_BotNpcs.erase(s_Id);
+                    continue;
+                }
+
+                auto [s_It, s_New] = s_BotNpcs.try_emplace(s_Id);
+
+                if (s_New)
+                    s_It->second.home = s_Npc.xf.pos;
+
+                auto& b = s_It->second;
+
+                if (s_NpcWalk && s_Now >= b.restUntil) {
+                    b.offset += b.dir * s_NpcSpeed * static_cast<float>(s_Dt);
+
+                    if (b.offset > 3.f || b.offset < 0.f) {
+                        b.offset = std::clamp(b.offset, 0.f, 3.f);
+                        b.dir = -b.dir;
+                        b.restUntil = s_Now + 2.0;
+                    }
+                }
+
+                s_Npc.xf.pos = b.home + Vec3 { b.offset, 0.f, 0.f };
+            }
+        }
+
+        // What the session logs (its own reasoning: hand-overs, the sync check, the health line).
+        for (; s_LogSeen < s_World.logLines.size(); ++s_LogSeen)
+            Log("log: %s", s_World.logLines[s_LogSeen].c_str());
+
+        if (s_World.logLines.size() > 3000) {
+            s_World.logLines.clear();
+            s_LogSeen = 0;
         }
 
         if (s_World.puppets.size() != s_LastPuppets || s_World.heldPaused != s_LastHeld) {
@@ -747,9 +867,18 @@ int RunBot(const std::string& p_Address, const std::string& p_CommandFile) {
             s_Session.GetHostNpcs(s_HostNpcs);
 
             for (const auto& s_Npc : s_HostNpcs) {
+                if (s_Dropped.count(s_Npc.id))
+                    continue;
+
+                const bool s_Known = s_World.npcs.count(s_Npc.id) != 0;
                 auto& s_Mine = s_World.npcs[s_Npc.id];
                 const bool s_KilledByUs = s_KilledHere.count(s_Npc.id) != 0;
+                const bool s_Ours = s_Known && !s_World.puppets.count(s_Npc.id) && s_BotNpcs.count(s_Npc.id);
+                const Transform s_OurXf = s_Mine.xf;
                 s_Mine = s_Npc;
+
+                if (s_Ours)
+                    s_Mine.xf = s_OurXf;
 
                 if (s_KilledByUs)
                     s_Mine.flags &= ~NpcFlag_Alive;
@@ -843,7 +972,7 @@ int RunBot(const std::string& p_Address, const std::string& p_CommandFile) {
         }
 
         // Wear what the host wears.
-        if (s_World.remoteOutfitChanges != s_OutfitChanges) {
+        if (s_World.remoteOutfitChanges != s_OutfitChanges && !s_NoOutfit) {
             s_OutfitChanges = s_World.remoteOutfitChanges;
             s_World.outfit = s_World.remoteOutfit;
             Log("Host outfit %s (charset %d, variation %d); wearing it too.", s_World.outfit.repositoryId.c_str(),
@@ -876,9 +1005,9 @@ int RunBot(const std::string& p_Address, const std::string& p_CommandFile) {
             if (s_Status.peerStateKnown && !(s_Status.peerState == s_LastHostState)) {
                 s_LastHostState = s_Status.peerState;
                 const auto& s_S = s_LastHostState;
-                Log("Host state: threat %u, menu %u, trespassing %d, kills %u (targets %u), knocked out %u, spotted %u, bodies %u, challenges %u",
+                Log("Host state: threat %u, menu %u, trespassing %d, kills %u (targets %u), knocked out %u, spotted %u, bodies %u, challenges %u, in hand '%s'",
                     s_S.threat, s_S.menu, (s_S.flags & PlayerFlag_Trespassing) ? 1 : 0, s_S.stats.kills, s_S.stats.targets,
-                    s_S.stats.knockouts, s_S.stats.spotted, s_S.stats.bodiesFound, s_S.stats.challenges);
+                    s_S.stats.knockouts, s_S.stats.spotted, s_S.stats.bodiesFound, s_S.stats.challenges, s_S.heldItem.c_str());
             }
 
             const uint8_t s_Stage = s_Status.peerBusy ? s_Status.peerBusyStage : static_cast<uint8_t>(LoadStage_None);
@@ -958,6 +1087,8 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--relay" && i + 1 < argc)
             g_RelayServer = std::string(argv[++i]) == "none" ? "" : argv[i];
+        else if (std::string(argv[i]) == "--seconds" && i + 1 < argc)
+            g_TestLength = std::max(1.0, std::atof(argv[++i]));
         else
             s_Args.emplace_back(argv[i]);
     }

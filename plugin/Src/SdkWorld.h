@@ -9,8 +9,10 @@
 
 #include "coop/Session.h"
 
+#include "Log.h"
 #include "PartnerPuppet.h"
 #include "PoseHook.h"
+#include "WorldScript.h"
 
 #include "Glacier/EntityFactory.h"
 #include "Glacier/Enums.h"
@@ -30,6 +32,8 @@ class SdkWorld final : public coop::IGameWorld {
 public:
     // coop::IGameWorld
     bool IsInScene() const override { return m_InScene; }
+    bool LogEnabled(coop::LogLevel p_Level) const override { return CoopLog::On(p_Level); }
+    void Log(coop::LogLevel p_Level, const char* p_Category, const std::string& p_Text) override { CoopLog::Write(p_Level, p_Category, p_Text); }
     coop::SceneDesc CurrentScene() const override { return m_Scene; }
     bool GetLocalAvatar(coop::Transform& p_Out) const override;
     bool GetLocalOutfit(coop::OutfitDesc& p_Out) const override;
@@ -177,6 +181,7 @@ public:
     // Whether our game should be held for the partner now (their pause, and our settings).
     bool WantPartnerHold() const { return m_PartnerWantsPause && m_PauseTogether && !m_PauseCapped && !m_PartnerMenuIgnored; }
     bool PartnerHoldsPause() const { return m_PartnerWantsPause; }
+    double PartnerPausedFor() const { return m_PartnerWantsPause && m_PartnerPauseSince >= 0.0 ? m_Now - m_PartnerPauseSince : 0.0; }
 
     struct ChatLine {
         std::string text;
@@ -206,6 +211,7 @@ public:
     bool PartnerSpawnFailed() const { return m_PartnerSpawnFailed; }
     // For diagnostics: the stand-in's state, and why it isn't shown if it isn't.
     std::string DescribeStandIn() const;
+    std::string ItemOwnersTest() const;
     size_t LastNpcCount() const { return m_NpcsById.size(); }
     bool GetPartnerPosition(coop::Vec3& p_Out) const;
     coop::Vec3 PartnerWanted() const { return m_PartnerWanted; }
@@ -264,10 +270,10 @@ public:
     void ForEachSceneEntity(const std::function<void(uint64_t, const ZEntityRef&)>& p_Do) const;
 
     // Bodies (NPCs down), where each was last agreed to lie: moved in our game since (dragged,
-    // dumped, put away), the partner is told once it rests. Moved or put away by the partner, ours
-    // is hidden: a ragdoll can't be put anywhere (its physics takes it back to where it lay, with
-    // its matrix set once, every frame, or with the ragdoll off and on again: Paris, 3.280.0), and
-    // left there it was found where the partner had taken it from.
+    // dumped, put away), the partner is told once it rests. Moved by the partner, ours is moved
+    // there (see MovedBody); put away by them, ours is hidden. A ragdoll set somewhere goes back to
+    // where it lay (its matrix set once, every frame, or with the ragdoll off and on again in the
+    // same frame: Paris, 3.280.0), so it is moved with its ragdoll off.
     struct Body {
         coop::Vec3 agreed;
         coop::Vec3 last;
@@ -275,12 +281,120 @@ public:
         double downAt = 0.0;
         bool hidden = false;
         bool gone = false;
+        // What it wears: 47 taking its clothes changes it (the partner is told, see BodyOutfit).
+        bool outfitKnown = false;
+        const void* kit = nullptr;
+        int32_t charset = -1;
+        int32_t variation = -1;
+        bool unseen = false; // the AI "unseen" switch pointed at it (see ApplyPeerBody)
+        bool peerHidden = false; // put away in the partner's game: no drag, no knock-out icon here
+        bool handled = false;    // dragged or dumped by our 47 since last told (only that is told)
+        // Still in its clothes (ZActor's m_bHasClothOutfit), watched on every scan: however the
+        // game strips a body, this goes off, and the partner is told.
+        bool clothKnown = false;
+        bool cloth = true;
+        bool restTold = false; // where it came to lie, told once (it fell in our game: ours is the one that counts)
     };
     std::unordered_map<uint64_t, Body> m_Bodies;
+    // Bodies we put down for the partner (their kill or knock-out, shown here): where theirs
+    // lies is where ours should.
+    std::unordered_set<uint64_t> m_DownForPartner;
+
+    // A body put where the partner has theirs: dragged on their screen (followed frame by frame),
+    // or left lying somewhere else than ours fell. Pulled there by pushes on its ragdoll (nothing
+    // else moves a body: see PullBody), then checked: one that won't come is hidden as before if it
+    // was being moved out of sight.
+    struct MovedBody {
+        ZActor* actor = nullptr;
+        coop::Transform want;
+        double since = 0.0;        // when this stage began
+        double lastHeld = -100.0;  // the partner's stream last placed it (a drag)
+        enum Stage { Held, Settling, Waiting } stage = Held; // Waiting: a retry after a pull that stalled
+        bool hiddenMove = false;   // moved out of sight (no one near): shown once it lies there
+        bool drag = false;
+        coop::Vec3 prev {}, vel {};
+        bool hasPrev = false;
+        float startOff = 0.f;
+        coop::Vec3 startPos {}; // where it lay when the pull began (how far it really went)
+        // The partner's drag: where their body is heading (their stream's speed), so ours follows
+        // where it is going instead of trailing behind and being yanked.
+        coop::Vec3 wantPrev {}, wantVel {};
+        double wantAt = -1.0;
+        // Unsticking: the best it got to, when it last got nearer, hops tried.
+        float bestOff = 1e9f;
+        double progressAt = 0.0, hopUntil = -1.0;
+        int hops = 0, tries = 0;
+    };
+    std::unordered_map<uint64_t, MovedBody> m_MovedBodies;
+    // Test: 0 as it should, 2 hidden as before (moved bodies hidden, drags not followed).
+    int m_BodyMoveMode = 0;
+    bool m_BodiesStuck = false;
+    uint32_t m_BodyMovesOk = 0, m_BodyMovesFailed = 0, m_BodyHops = 0, m_BodyRetries = 0;
+    double m_LastBodyPull = 0.0;
+    double m_NextUnitCheck = 0.0;
+    // Where on the body the pushes go (metres above its root) and on how many of its bones: tunable
+    // from the test channel ("bodymove lever 0.3", "bodymove bones 12").
+    float m_PullLever = 0.15f;
+    uint32_t m_PullBoneCount = 12;
+    bool CanMoveBodies() const;
+    float PullBody(MovedBody& p_Body, float p_Dt);
+    void HoldBody(uint64_t p_Id, ZActor* p_Actor, const coop::Transform& p_Xf);
+    void LetGoBody(uint64_t p_Id);
+    // Unseen to our AI (the switch the stand-in has): a body that lies elsewhere in the partner's
+    // game, or is put away there, raises no alarm here.
+    void MakeBodyUnseen(uint64_t p_Id, ZActor* p_Actor);
+    // The shared id of one of the level's NPCs (0 if it isn't one, or is the stand-in).
+    uint64_t NpcIdOf(ZActor* p_Actor) const;
+    // A hit (an SHitInfo) dealt by our own 47: its weapon owner, read through the game's type info.
+    bool HitByOurPlayer(const void* p_HitInfo) const;
+    // Our 47 or the partner's stand-in within p_Range of p_Pos (someone would see a body move).
+    bool SomeoneNear(const coop::Vec3& p_Pos, float p_Range) const;
+    void MoveBodyTo(uint64_t p_Id, ZActor* p_Actor, const coop::Transform& p_Xf, bool p_Hidden = true);
+    void UpdateMovedBodies();
+    void ForgetMovedBody(uint64_t p_Id);
+    void HideBodyForPartner(uint64_t p_Id, ZActor* p_Actor, bool p_PutAway);
+    std::string DescribeMovedBodies() const;
+    // Items the partner moved, held where they said for a moment (see ApplyPeerItem).
+    struct PinnedItem {
+        coop::Transform xf;
+        double until = 0.0;
+    };
+    std::unordered_map<uint64_t, PinnedItem> m_PinnedItems;
+    void HoldPinnedItems();
+    uint64_t m_BodyDragTestId = 0;
+    double m_BodyDragTestUntil = 0.0;
+    void UpdateBodyDragTest();
+    struct BodyProbe {
+        bool active = false;
+        uint64_t id = 0;
+        ZActor* actor = nullptr;
+        int method = 0;
+        int frame = 0;
+        coop::Transform from, to;
+    } m_Probe;
+    void UpdateBodyProbe();
+    std::vector<ZEntityRef> m_BodyUnseen; // the scene's, freed with it
+    void RememberBodyOutfit(Body& p_Body, ZActor* p_Actor);
     void CollectBodyChanges(std::vector<coop::ItemChange>& p_Out);
     void ApplyPeerBody(const coop::ItemChange& p_Change);
     void AgreeBody(uint64_t p_Id, ZActor* p_Actor);
     std::string BodyTest(const std::string& p_Arg);
+    // Team events the world wants sent to the partner (name, text), taken each frame while synced.
+    std::vector<std::pair<std::string, std::string>> TakeOutgoingEvents() { return std::exchange(m_OutgoingEvents, {}); }
+    // A body's outfit changed in the partner's game (47 took its clothes): "id repositoryId charset
+    // variation nude". Kept and tried again for a while when that body isn't down here yet.
+    void ApplyPeerBodyOutfit(const std::string& p_Text);
+    bool ApplyPeerBodyOutfitNow(const std::string& p_Text);
+    std::vector<std::pair<double, std::string>> m_PendingBodyOutfits; // (until, text)
+    void RetryPeerBodyOutfits();
+    // What the partner's 47 carries on its back (a rifle, a shotgun), on the stand-in's back.
+    void SetPartnerBackItem(const std::string& p_RepositoryId) { m_BackSlot.wanted = p_RepositoryId; }
+    // An item the partner dropped that our game doesn't have (from their loadout, or one they
+    // threw): a copy of it put where theirs lies. "id repositoryId x y z qx qy qz qw".
+    void ApplyPeerItemSpawn(const std::string& p_Text);
+    std::string ItemSyncTest() const;
+    // The game set an actor's outfit (ZActor_SetOutfit, hooked): a body's, told to the partner.
+    void OnActorOutfitSet(ZActor* p_Actor, ZGlobalOutfitKit* p_Kit, int32_t p_Charset, int32_t p_Variation, bool p_Nude);
     // What the partner's 47 has in hand, in the stand-in's: a copy of it made here (by repository id)
     // and given to the stand-in the way the game gives NPCs their items, in its right hand.
     void SetPartnerHeldItem(const std::string& p_RepositoryId);
@@ -288,25 +402,84 @@ public:
     std::string LocalHeldItem() const;
     std::string HeldItemsTest() const;
     std::string StandInItemTest(const std::string& p_Arg);
+    // An item made for the stand-in to carry: in its right hand, or on its back.
+    struct StandInSlot {
+        std::string wanted;
+        std::string shown; // what it carries, or was asked for (ticket pending)
+        TEntityRef<IItem> item;
+        uint32_t ticket = 0;
+        double askedAt = -1.0;
+        double failedAt = -100.0;
+        std::string failedFor;
+        int attach = 0; // EAttachLocation
+        bool weapon = false;
+    };
+    StandInSlot m_HandSlot;
+    StandInSlot m_BackSlot { .attach = 3 }; // eALBack
+    // Where each puppet was last put (see SetNpcTransform), for the pose hook's world pins.
+    struct NpcPin {
+        void* animator = nullptr;
+        coop::Transform xf;
+        double at = -100.0;
+        double lookedUpAt = -100.0;
+    };
+    std::unordered_map<uint64_t, NpcPin> m_NpcPins;
+    std::vector<PoseHook::Pin> m_PinScratch;
+    float m_PinTestYaw = 0.f; // test: puppets are put down turned by this many degrees
+    // The script sync (WorldScript.h): the level's interactions by their place in the scene.
+    std::unordered_map<uint64_t, ZEntityRef> m_ScriptRefs;
+    std::vector<WorldScript::Fired> m_ScriptFired;
+    struct PendingPin {
+        uint64_t key;
+        uint32_t pin;
+        double at;
+        int kind = 0;
+        uint32_t bits = 0;
+    };
+    std::vector<PendingPin> m_PendingPins;
+    void UpdateScriptSync();
+    void ApplyPeerScriptPin(const std::string& p_Text);
+    void RetryPeerScriptPins();
+    double m_NextNpcTable = 0.0;
+    void NoteNpcTable();
+    void FlushNpcPins();
+    bool m_StandInItemsOff = false; // the game faulted attaching one: none until the next mission
+    double m_StandInChangedAt = -100.0; // the stand-in last shown, hidden or given an item (see UpdateRestart)
+    int ForgetStandInItem(const ZEntityRef& p_Item);
     void UpdateStandInItem();
-    void DropStandInItem();
+    void UpdateStandInSlot(StandInSlot& p_Slot, const char* p_Where);
+    void DropStandInItem(StandInSlot& p_Slot);
+    void DropStandInItem() { DropStandInItem(m_HandSlot); }
     void OnStandInItemCreated(uint32_t p_Ticket, TEntityRef<IItemBase> p_Item);
-    std::string m_StandInItemWanted;
-    std::string m_StandInItemShown; // what it holds, or was asked for (ticket pending)
-    TEntityRef<IItem> m_StandInItem;
-    uint32_t m_StandInItemTicket = 0;
-    double m_StandInItemAskedAt = -1.0;
-    double m_StandInItemFailedAt = -100.0;
     int m_StandInAttach = 0; // EAttachLocation (test: other places)
     bool m_StandInWeapon = false;
     mutable double m_HeldCheckAt = 0.0;
     mutable std::string m_HeldItem;
+    mutable std::string m_BackItem; // on our 47's back (see LocalHeldItem)
+    std::string m_BackItemSent;
+    double m_BackItemSentAt = -100.0;
     uint64_t m_ItemTestId = 0;
     coop::Transform m_ItemTestXf;
     // True for an event about an NPC we killed only to mirror the partner's game.
     // p_EvenTargets: also a target's (which still count here, but aren't sent back to the partner).
     bool IsPartnerKillEvent(const std::string& p_EventJson, bool p_EvenTargets = false) const;
-    void AddPartnerKillKey(const std::string& p_Key) { m_PartnerKills.insert(p_Key); }
+    // The NPCs, up and about, that one of the game's own events names (by repository id): our
+    // game's AI is doing something with them. At most p_Max.
+    std::vector<uint64_t> NpcsNamedIn(const std::string& p_EventJson, size_t p_Max = 6) const;
+    // Calm NPCs in earshot of something our 47 threw since the last call.
+    std::vector<uint64_t> TakeNoiseClaims();
+    // "3 of 35 NPCs ..." for the diagnostics.
+    std::string DescribeNpcIds() const;
+    std::string ScriptTest(const std::string& p_Arg);
+    std::string PinTest(const std::string& p_Arg);
+    std::string GotoTest(const std::string& p_Arg);
+    // The Kill or Pacify event of the partner's victim came: its repository id (which later events
+    // name it by) is kept, for an NPC with a name of its own. A crowd's "John Doe" is waited for
+    // once only: kept by name, every later John Doe of ours was taken for the partner's.
+    void AddPartnerKillKey(const std::string& p_Key, const std::string& p_EventJson);
+    void NotePartnerVictim(ZActor* p_Actor);
+    bool SharedName(const std::string& p_Name) const;
+    std::vector<std::pair<std::string, double>> m_PendingSharedKills; // (name, until)
     // A Pacify (true) or Kill (false) event from our game: that NPC is knocked out, or no longer
     // just knocked out. IsPacified() doesn't say so.
     void NotePacified(const std::string& p_EventJson, bool p_Pacified);
@@ -314,6 +487,9 @@ public:
     void SetPoseIdentity(bool p_On) { m_PoseIdentity = p_On; m_Mirror = p_On; }
     // Once a frame on the game thread: points the pose hook at the local 47 and the stand-in.
     void UpdatePoses();
+    std::string BodyMoveTest(const std::string& p_Arg);
+    std::string BodyProbeStart(const std::string& p_Arg);
+    void SetBodyMoveMode(int p_Mode) { m_BodyMoveMode = p_Mode; m_BodiesStuck = false; }
     std::string DescribeVictims() const;
     // Test: puts our 47 that far behind the nearest standing NPC, facing the same way (ready to subdue).
     std::string StepBehindNearestNpc(float p_Distance, bool p_Loneliest = false);
@@ -324,6 +500,8 @@ public:
     void SetTrace(std::function<void(const std::string&)> p_Trace) { m_Trace = std::move(p_Trace); }
     // Test channel: "partner off" never spawns the stand-in, to tell its effects apart from the rest.
     void SetPartnerEnabled(bool p_Enabled) { m_PartnerEnabled = p_Enabled; }
+    // Test channel: our 47's outfit can't be named (as on some players' PCs).
+    void SetOutfitUnknownTest(bool p_On) { m_OutfitUnknownTest = p_On; }
     // Test channel: walk the stand-in with the game's AI instead of teleporting it.
     void SetPuppetMode(bool p_On) { m_PuppetMode = p_On; }
     PartnerPuppet& Puppet() { return m_Puppet; }
@@ -349,6 +527,10 @@ public:
     static SMatrix ToMatrix(const coop::Transform& p_Xf);
 
 private:
+    std::vector<std::pair<std::string, std::string>> m_OutgoingEvents;
+    // Queued for the partner (at most 256 waiting: the oldest go first while nobody takes them).
+    void Tell(const char* p_Name, std::string p_Text);
+    bool m_ApplyingBodyOutfit = false; // our own ZActor_SetOutfit call, not told back
     enum class Spawn { Done, Waiting, Failed };
 
     Spawn SpawnPartner(const coop::Transform& p_Xf);
@@ -369,6 +551,7 @@ private:
     bool m_PartnerSpawnFailed = false;
     bool m_PartnerHidden = false;
     bool m_PartnerEnabled = true;
+    bool m_OutfitUnknownTest = false;
     // Without poses from the partner (an older game build the hook can't attach to), the
     // stand-in walks by the game's AI instead.
     bool m_PuppetMode = true;
@@ -410,11 +593,55 @@ private:
         bool ours = false;
         double followUntil = 0.0;
         coop::Transform sent;
+        coop::Vec3 from {};  // where our 47 let go of it
+        coop::Vec3 last {};  // where it was at the last look
+        bool landed = false; // thrown, and come down: its noise was told (see TakeNoiseClaims)
     };
+    // Where things our 47 threw are flying and landing: NPCs in earshot are ours to run.
+    std::vector<coop::Vec3> m_NoiseSpots;
+    // Each NPC's repository id (the game's own events name NPCs by it), and back.
+    mutable std::unordered_map<std::string, uint64_t> m_NpcByRepo;
+    mutable double m_NpcByRepoAt = -100.0;
+    mutable size_t m_NpcByRepoFor = 0;
+    mutable const char* m_RepoProperty = nullptr;
+    void RefreshNpcRepoIds() const;
     std::unordered_map<uint64_t, TrackedItem> m_Items;
     std::unordered_set<uint64_t> m_PeerHeldItems;
     double m_NextItemScan = 0.0;
     class ZHM5Item* FindItem(uint64_t p_Id, ZEntityRef& p_Ref) const;
+    // Every item placed in the scene, by its place in the scene (as doors are, see
+    // ForEachSceneEntity): an item's own entity id repeats for each copy of its template (the
+    // tools on the table at the start of Freeform Training share theirs), and those weren't synced
+    // at all. Found once a mission, with the doors.
+    std::unordered_map<const void*, uint64_t> m_ItemKeys;
+    std::unordered_set<uint64_t> m_SceneItemKeys;
+    bool m_ItemKeysReady = false;
+    uint64_t ItemKeyOf(const ZEntityRef& p_Ref) const;
+    template <class F>
+    void ForEachItem(F&& p_Do, bool p_All = false) const;
+    // Placed items within reach of our 47 at the last scan: one gone from the world since (picked
+    // up into a stack, used up) was taken by us.
+    std::unordered_map<uint64_t, coop::Vec3> m_NearItems;
+    // Our own items that the partner's game doesn't have (our loadout's, thrown ones): told with
+    // their repository id when we let go of them, so a copy appears there.
+    std::unordered_map<uint64_t, std::string> m_DynamicTold;
+    // Copies of the partner's such items, by the partner's id for them.
+    struct ItemCopy {
+        uint32_t ticket = 0; // the game making it (as the stand-in's own items are made)
+        ZEntityRef item;
+        coop::Transform xf;
+        std::string repo;
+        double askedAt = 0.0;
+        bool hidden = false;
+    };
+    std::unordered_map<uint64_t, ItemCopy> m_Copies;
+    // Spawns waiting for the stand-in (copies are made through it), with until when.
+    std::vector<std::pair<double, std::string>> m_PendingSpawns;
+    void OnCopyCreated(uint32_t p_Ticket, TEntityRef<IItemBase> p_Item);
+    std::unordered_map<const void*, uint64_t> m_CopyByItem;
+    void UpdateCopies();
+    void RemoveCopy(uint64_t p_Id);
+    std::string ItemRepository(const class ZHM5Item* p_Item) const;
 
     // The stand-in's skeleton against the partner's pose, after each outfit change.
     void CheckPartnerSkeleton();
@@ -507,7 +734,12 @@ private:
 
     mutable std::unordered_map<uint64_t, ZActor*> m_NpcsById;
     mutable std::unordered_map<uint64_t, int> m_IdCountScratch; // kept to avoid reallocating every scan
+    // What the NPC list leaves out (told in the log when it changes, at most every 10 s): actors
+    // sharing an id (never synced), and disabled ones (not in the mission yet).
+    mutable size_t m_ListLogged[3] = { SIZE_MAX, SIZE_MAX, SIZE_MAX };
+    mutable double m_NextListLog = 0.0;
     mutable std::unordered_map<ZGlobalOutfitKit*, std::string> m_OutfitIdCache;
+    mutable std::unordered_set<ZGlobalOutfitKit*> m_OutfitIdTold; // traced once: named another way, or not at all
 
     // "Viktor Novikov (guard)", or just "a guard" for the crowd's "John Doe".
     static std::string NpcLabel(const ZActor* p_Actor);

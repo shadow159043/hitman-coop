@@ -1,0 +1,74 @@
+#pragma once
+
+#include <atomic>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <vector>
+
+// Keeps HITMAN Co-op up to date by itself. At game start it reads the fork-signed update.txt
+// from Artur Edition's dedicated GitHub updates branch (version, files, SHA-256 and notes), downloads the
+// files that differ from the installed ones and checks them, then swaps them in: a DLL the game has
+// loaded can be renamed but not overwritten, so the old one becomes <name>.hcold and the new one
+// takes its place. The game loads the new version the next time it starts, when the old files are
+// deleted and the player is told what's new.
+class Updater {
+public:
+    enum class State { Idle, Checking, UpToDate, Staged, Failed };
+
+    struct Status {
+        State state = State::Idle;
+        std::string version; // the one staged
+        std::string error;
+    };
+
+    // A file the update replaces, relative to the game's Retail folder ("mods/HitmanCoop.dll").
+    struct File {
+        std::string path;
+        uint64_t size = 0;
+        std::string sha256;
+        std::string download; // signed release asset filename; defaults to the target basename
+    };
+
+    struct Manifest {
+        std::string version;
+        std::string base; // where the files are: base + the file's name
+        std::vector<File> files;
+        std::string notes;
+    };
+
+    ~Updater();
+
+    // Deletes what the last update left behind (the .hcold files), at game start.
+    static void CleanUp(const std::string& p_GameDir);
+
+    // After an update: what's new in the version now running, once (then forgotten).
+    static bool TakeWhatsNew(const std::string& p_GameDir, const std::string& p_Version, std::string& p_Notes);
+
+    // Checks for a newer version than p_Version in the background, and stages it. update.txt from
+    // p_ManifestUrl, else from p_FallbackUrl.
+    // p_Reinstall: the same version too, when its files differ (the build for another game
+    // version is installed: the right one has the same version number).
+    void Start(const std::string& p_GameDir, const std::string& p_Version, const std::string& p_ManifestUrl, const std::string& p_FallbackUrl = {},
+        bool p_Reinstall = false);
+    Status Get() const;
+
+    // update.txt: "version <v>", "base <url>", "file <path> <size> <sha256>", then "notes" and the
+    // lines of the changelog. False if it isn't one.
+    static bool Parse(const std::string& p_Text, Manifest& p_Out);
+    // -1, 0 or 1 as a is older than, the same as, or newer than b ("0.13.0" against "0.12.2").
+    static int CompareVersions(const std::string& p_A, const std::string& p_B);
+    static std::string Sha256(const std::string& p_Data);
+    // p_Text signed with the update key (UpdateKey.h): an ECDSA P-256 signature over its SHA-256,
+    // 64 bytes (r, s) in base64, as tools/update-key.ps1 writes it.
+    static bool VerifySignature(const std::string& p_Text, const std::string& p_SignatureBase64);
+
+private:
+    void Run(std::string p_GameDir, std::string p_Version, std::string p_ManifestUrl, std::string p_FallbackUrl, bool p_Reinstall);
+    void Set(State p_State, const std::string& p_Version = {}, const std::string& p_Error = {});
+
+    mutable std::mutex m_Mutex;
+    Status m_Status;
+    std::thread m_Thread;
+    std::atomic<bool> m_Stop { false };
+};
