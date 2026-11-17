@@ -12,6 +12,7 @@
 #include "Interpolation.h"
 #include "Log.h"
 #include "Protocol.h"
+#include "Lobby.h"
 #include "Socket.h"
 
 namespace coop {
@@ -208,6 +209,7 @@ struct SessionStatus {
     // Seconds since the partner was last heard from (connected only).
     double peerSilence = 0.0;
     uint32_t floodDropped = 0; // chat lines, marks and events of theirs dropped as a flood
+    LobbySnapshot lobby; // host-authoritative vote, ready and launch state
 };
 
 class Session {
@@ -230,6 +232,16 @@ public:
     // The game calls these when a mission finishes loading and when it is torn down.
     void OnLocalSceneLoaded();
     void OnLocalSceneUnloaded();
+
+    // UI requests are queued and called on the game thread, never on the ImGui thread.
+    bool LobbyVote(uint8_t choice);
+    bool LobbyLock(uint8_t choice);
+    bool LobbyReady(bool ready);
+    bool LobbyStart(double now);
+    bool LobbyCancel();
+    bool LobbyReturnToVoting();
+    bool LobbyMustWait() const;
+    bool LobbyCompatible() const;
 
     void SendMissionEvent(const std::string& p_Name, const std::string& p_Json);
     void SendChat(const std::string& p_Text, bool p_Quick = false);
@@ -424,6 +436,12 @@ private:
     void SendSceneInfo();
     void SendSceneReady(uint32_t p_Epoch);
     void SendClientScene();
+    void SendLobbySnapshot();
+    void SendLobbyInput(MsgLobbyInput command);
+    void RememberLocalMission();
+    void UpdateLobby(double now);
+    bool HasObservedMission(const SceneDesc& scene) const;
+    void HandleLobbyInput(const MsgLobbyInput& command);
     void OnSyncChanged(bool p_Synced);
 
     void DropPeer(const std::string& p_Reason);
@@ -458,6 +476,14 @@ private:
     uint32_t m_PeerReadyEpoch = 0;  // host: epoch the client reported ready for
     uint32_t m_LocalReadyEpoch = 0; // client: epoch we told the host we are ready for
     bool m_WasSynced = false;
+
+    LobbyRoom m_Lobby;
+    uint32_t m_LobbyNextSerial = 0;
+    uint32_t m_LobbyLastPeerSerial = 0;
+    uint64_t m_LaunchCounter = 0;
+    uint64_t m_LobbyLoadedSentId = 0;
+    uint64_t m_LobbyAcceptedId = 0;
+    std::vector<SceneDesc> m_ObservedMissions; // only scenes from real game-load hooks
     bool m_ToldAboutMismatch = false;
     SceneDesc m_PeerScene;          // host: where the client says it is when that isn't our mission
 
