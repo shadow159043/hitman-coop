@@ -1473,6 +1473,151 @@ void HitmanCoop::DrawChatTab(const coop::SessionStatus& p_Status) {
     ImGui::EndDisabled();
 }
 
+
+void HitmanCoop::DrawLobbyTab(const coop::SessionStatus& p_Status, bool p_InMission) {
+    const auto& state = p_Status.lobby;
+    const Palette palette = Colours(m_ColourBlind);
+    const bool connected = p_Status.state == coop::SessionState::Connected;
+    const bool host = p_Status.role == coop::SessionRole::Host;
+    const unsigned me = host ? 0 : 1;
+    const unsigned partner = host ? 1 : 0;
+
+    SectionTitle(ICON_MD_GROUPS " CO-OP MISSION LOBBY");
+    ImGui::TextDisabled("2 players  |  Protocol %u  |  %s", coop::kProtocolVersion,
+        connected ? "CONNECTED" : "DISCONNECTED");
+    if (!connected) {
+        ImGui::TextWrapped("Host or join a game from the Play tab first. Mission voting requires an active co-op connection.");
+        return;
+    }
+
+    ImGui::TextColored(c_Gold, "%s", coop::LobbyPhaseName(state.phase));
+    if (!p_Status.peerModVersion.empty() && p_Status.peerModVersion != c_ModVersion)
+        ImGui::TextColored(c_Red, "Player versions differ. Install the same Artur Edition release.");
+    if (!p_Status.peerGameVersion.empty() && p_Status.peerGameVersion != m_GameVersion)
+        ImGui::TextColored(c_Red, "Game versions differ. Co-op launch is disabled.");
+
+    // This is a conservative real-scene browser. The SDK currently provides
+    // loaded SceneDesc values, not a trustworthy license/entitlement catalog
+    // or a verified command for selecting arbitrary contracts from menus.
+    SectionTitle(ICON_MD_MAP " MISSIONS OBSERVED IN GAME");
+    if (state.count == 0)
+        ImGui::TextWrapped("No missions have been observed yet. Load a mission normally in HITMAN; the mod will record the real scene identifier. Only scenes BOTH players have entered can be selected.");
+    else
+        ImGui::TextDisabled("Shown from real loaded scene identifiers; no fictional destination entries.");
+
+    for (uint8_t i = 0; i < state.count; ++i) {
+        const auto& option = state.options[i];
+        const std::string location = coop::LocationDisplayName(option.scene.Location());
+        const std::string name = location + " / " + (option.scene.codename.empty() ? "Unknown mission" : option.scene.codename);
+        const bool shared = option.observed == 3;
+        const bool selected = state.selected == i;
+        ImGui::PushID(static_cast<int>(i));
+        ImGui::Separator();
+        ImGui::TextColored(selected ? palette.good : c_White, "%s", name.c_str());
+        ImGui::TextDisabled("Scene: %s", option.scene.codename.c_str());
+        ImGui::TextColored(shared ? palette.good : c_Gold, shared
+            ? "Seen in both games (ownership not independently verified)"
+            : "Unavailable: one player has not yet loaded this mission");
+        if (state.phase == coop::LobbyPhase::Voting) {
+            const bool myVote = state.votes[me] == i;
+            ImGui::BeginDisabled(!shared || myVote);
+            if (ImGui::Button(myVote ? "Your vote" : "Vote for this mission")) {
+                Command cmd { Command::Kind::LobbyVote };
+                cmd.value = i;
+                PushCommand(cmd);
+            }
+            ImGui::EndDisabled();
+            if (host && state.votes[0] != coop::kLobbyNoChoice &&
+                state.votes[1] != coop::kLobbyNoChoice &&
+                (i == state.votes[0] || i == state.votes[1]) && shared) {
+                ImGui::SameLine();
+                if (ImGui::Button("Confirm winner")) {
+                    Command cmd { Command::Kind::LobbyLock };
+                    cmd.value = i;
+                    PushCommand(cmd);
+                }
+            }
+        }
+        ImGui::PopID();
+    }
+
+    const auto VoteText = [&](uint8_t choice) -> std::string {
+        if (choice >= state.count) return "Not voted";
+        const auto& scene = state.options[choice].scene;
+        return coop::LocationDisplayName(scene.Location()) + " / " + scene.codename;
+    };
+    ImGui::Separator();
+    ImGui::Text("Your vote: %s", VoteText(state.votes[me]).c_str());
+    ImGui::Text("Partner vote: %s", VoteText(state.votes[partner]).c_str());
+    if (state.phase == coop::LobbyPhase::Voting && state.votes[0] != coop::kLobbyNoChoice &&
+        state.votes[1] != coop::kLobbyNoChoice && state.votes[0] != state.votes[1])
+        ImGui::TextColored(c_Gold, "Tie: host must explicitly confirm one of the voted missions.");
+
+    if (state.selected < state.count) {
+        const auto& chosen = state.options[state.selected].scene;
+        SectionTitle(ICON_MD_ASSIGNMENT " SELECTED MISSION");
+        ImGui::Text("%s / %s", coop::LocationDisplayName(chosen.Location()).c_str(), chosen.codename.c_str());
+        ImGui::TextDisabled("This is the exact scene and mission-brick configuration observed by both clients.");
+        ImGui::TextDisabled("Different mission bricks/difficulty will not pass scene validation.");
+    }
+
+    if (state.phase == coop::LobbyPhase::Ready) {
+        SectionTitle(ICON_MD_HOW_TO_REG " READY CHECK");
+        ImGui::TextColored(state.ready[me] ? palette.good : c_Gold, "You: %s", state.ready[me] ? "READY" : "NOT READY");
+        ImGui::TextColored(state.ready[partner] ? palette.good : c_Gold, "%s: %s",
+            p_Status.peerName.c_str(), state.ready[partner] ? "READY" : "NOT READY");
+        if (ImGui::Button(state.ready[me] ? "Unready" : "I'm ready")) {
+            Command cmd { Command::Kind::LobbyReady };
+            cmd.value = state.ready[me] ? 0 : 1;
+            PushCommand(cmd);
+        }
+        if (host) {
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!state.ready[0] || !state.ready[1] ||
+                p_Status.peerModVersion != c_ModVersion || p_Status.peerGameVersion != m_GameVersion);
+            if (ImGui::Button("START MISSION REQUEST"))
+                PushCommand({ Command::Kind::LobbyStart });
+            ImGui::EndDisabled();
+        }
+    }
+    if (state.phase == coop::LobbyPhase::Request || state.phase == coop::LobbyPhase::Loading) {
+        SectionTitle(ICON_MD_SYNC " MULTIPLAYER LOADING");
+        ImGui::Text("Launch ID: %llu", static_cast<unsigned long long>(state.launchId));
+        ImGui::Text("You: %s", state.loaded[me] ? "SCENE READY" :
+            p_InMission ? "Checking scene" : "WAITING TO LOAD");
+        ImGui::Text("%s: %s", p_Status.peerName.c_str(),
+            state.loaded[partner] ? "SCENE READY" : p_Status.peerBusy ? "LOADING" : "WAITING FOR PARTNER");
+        ImGui::TextDisabled("Connection: ping %.0f ms, loss %.1f%%",
+            p_Status.stats.rttMs, p_Status.stats.lossPercent);
+        const float progress = (state.loaded[0] ? 0.5f : 0.f) + (state.loaded[1] ? 0.5f : 0.f);
+        ImGui::ProgressBar(progress, ImVec2(-1.f, 0.f));
+        ImGui::TextWrapped("Select the exact mission in HITMAN's normal mission menu on BOTH computers. "
+            "Automatic navigation is disabled because there is no verified safe mission-launch API. "
+            "The first loaded game is held by the existing pause hook when supported.");
+        if (!GamePause::Available())
+            ImGui::TextColored(c_Red, "Native pause hook unavailable; do not assume gameplay can be held safely.");
+        if (ImGui::Button("Cancel mission launch"))
+            PushCommand({ Command::Kind::LobbyCancel });
+    }
+    if (state.phase == coop::LobbyPhase::Playing) {
+        ImGui::TextColored(palette.good, "BOTH SCENES LOADED AND CO-OP SYNC VERIFIED");
+        ImGui::TextDisabled("Mission scripts, objectives and items are still handled by normal HITMAN and co-op sync.");
+        if (host && ImGui::Button("Reset voting for next mission"))
+            PushCommand({ Command::Kind::LobbyReturn });
+        if (host)
+            ImGui::TextDisabled("This resets lobby state only. Return to menus using HITMAN's own UI.");
+    }
+    if (state.phase == coop::LobbyPhase::Failed) {
+        ImGui::TextColored(c_Red, "MISSION LAUNCH STOPPED");
+        ImGui::TextWrapped("%s", state.error.c_str());
+        if (ImGui::Button("Return to voting / retry"))
+            PushCommand({ Command::Kind::LobbyReturn });
+    }
+    ImGui::Spacing();
+    ImGui::TextDisabled("Experimental: 2-player limit, 2 recently observed missions; no verified DLC ownership API, "
+        "mission thumbnails or safe menu navigation. Never force game scene transitions.");
+}
+
 void HitmanCoop::DrawMissionTab(const coop::SessionStatus& p_Status) {
     coop::MsgPlayerState s_Ours;
     Record s_Record;
@@ -1993,6 +2138,7 @@ void HitmanCoop::DrawWindow(const coop::SessionStatus& p_Status, bool p_InMissio
             };
 
             Tab(ICON_MD_SPORTS_ESPORTS " Play", [&] { DrawPlayTab(p_Status, p_InMission, p_Relay); });
+            Tab(ICON_MD_GROUPS " Lobby", [&] { DrawLobbyTab(p_Status, p_InMission); });
 
             const size_t s_Unread = m_World.PartnerChatCount() - std::min(m_ChatSeen, m_World.PartnerChatCount());
             const std::string s_ChatLabel = std::string(ICON_MD_CHAT " Chat") + (s_Unread ? " (" + std::to_string(s_Unread) + ")" : "") + "###HitmanCoopChatTab";

@@ -1270,6 +1270,21 @@ void HitmanCoop::ShowDebrief() {
 }
 
 void HitmanCoop::UpdateWaitForPartner(double p_Now, const coop::SessionStatus& p_Status) {
+    // Host-authoritative lobby launches have a stricter hold than the old
+    // best-effort partner-loading grace period. Never silently continue the
+    // mission after its timer expires: the lobby will fail and release on its
+    // own timeout/disconnect. This is the game's existing named pause request,
+    // not a custom memory patch or a simulated UI countdown.
+    if (m_Session && m_Session->LobbyMustWait() && GamePause::Available()) {
+        if (!m_Waiting) {
+            m_Waiting = true;
+            m_WaitStart = p_Now;
+            m_World.Notify("Multiplayer mission on hold until both scenes are loaded and synchronized.");
+        }
+        m_SkipWait = false;
+        GamePause::SetWaitPause(true);
+        return;
+    }
     const bool s_Connected = p_Status.state == coop::SessionState::Connected;
 
     if (p_Status.peerBusy)
@@ -1322,6 +1337,38 @@ void HitmanCoop::ProcessCommands(double p_Now) {
     }
 
     for (const auto& s_Command : s_Commands) {
+        // Networked lobby actions must be handled on the game thread, never
+        // directly from ImGui. The Session enforces the host-only operations,
+        // generation/launch checks and player compatibility before mutation.
+        if (s_Command.kind == Command::Kind::LobbyVote ||
+            s_Command.kind == Command::Kind::LobbyLock ||
+            s_Command.kind == Command::Kind::LobbyReady ||
+            s_Command.kind == Command::Kind::LobbyStart ||
+            s_Command.kind == Command::Kind::LobbyCancel ||
+            s_Command.kind == Command::Kind::LobbyReturn) {
+            bool s_Ok = false;
+            if (m_Session && m_Session->Status().state == coop::SessionState::Connected) {
+                switch (s_Command.kind) {
+                case Command::Kind::LobbyVote:
+                    if (s_Command.value >= 0 && s_Command.value < coop::kLobbyOptions)
+                        s_Ok = m_Session->LobbyVote(static_cast<uint8_t>(s_Command.value));
+                    break;
+                case Command::Kind::LobbyLock:
+                    if (s_Command.value >= 0 && s_Command.value < coop::kLobbyOptions)
+                        s_Ok = m_Session->LobbyLock(static_cast<uint8_t>(s_Command.value));
+                    break;
+                case Command::Kind::LobbyReady: s_Ok = m_Session->LobbyReady(s_Command.value != 0); break;
+                case Command::Kind::LobbyStart: s_Ok = m_Session->LobbyStart(p_Now); break;
+                case Command::Kind::LobbyCancel: s_Ok = m_Session->LobbyCancel(); break;
+                case Command::Kind::LobbyReturn: s_Ok = m_Session->LobbyReturnToVoting(); break;
+                default: break;
+                }
+            }
+            if (!s_Ok)
+                m_World.Notify("Lobby request rejected: check votes, readiness, mission access and player versions.");
+            continue;
+        }
+
         if (s_Command.kind == Command::Kind::Chat || s_Command.kind == Command::Kind::QuickChat) {
             if (m_Session && m_Session->Status().state == coop::SessionState::Connected) {
                 m_Session->SendChat(s_Command.address, s_Command.kind == Command::Kind::QuickChat);

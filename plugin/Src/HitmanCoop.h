@@ -283,6 +283,7 @@ private:
     void DrawPlayTab(const coop::SessionStatus& p_Status, bool p_InMission, const std::optional<coop::RelayState>& p_Relay);
     void DrawChatTab(const coop::SessionStatus& p_Status);
     void DrawMissionTab(const coop::SessionStatus& p_Status);
+    void DrawLobbyTab(const coop::SessionStatus& p_Status, bool p_InMission);
     void DrawSettingsTab();
     void DrawHotkeysTab();
     void DrawAboutTab(const coop::SessionStatus& p_Status);
@@ -341,7 +342,8 @@ private:
 
     // Requests from the UI (render thread), handled on the game thread.
     struct Command {
-        enum class Kind { Host, Join, Leave, Chat, QuickChat, Regroup, Ping, ComeHere, ReadyCheck, Countdown, Signal, Kick, Reconnect } kind;
+        enum class Kind { Host, Join, Leave, Chat, QuickChat, Regroup, Ping, ComeHere, ReadyCheck, Countdown, Signal, Kick, Reconnect,
+            LobbyVote, LobbyLock, LobbyReady, LobbyStart, LobbyCancel, LobbyReturn } kind;
         std::string address;   // join: code or address
         uint16_t port = 0;
         std::string name;
