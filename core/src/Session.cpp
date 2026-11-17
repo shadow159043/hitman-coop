@@ -107,7 +107,7 @@ void Session::Join(std::unique_ptr<IDatagramSocket> p_Socket, const Endpoint& p_
     m_HostScene = {};
     m_LocalReadyEpoch = 0;
     m_LocalInScene = m_World.IsInScene();
-    m_Lobby.Clear();
+    m_Lobby = LobbyRoom {}; // fresh guest accepts host revision 1
     m_LobbyNextSerial = 0;
     m_LobbyLoadedSentId = 0;
     m_LobbyAcceptedId = 0;
@@ -188,7 +188,10 @@ void Session::DropPeer(const std::string& p_Reason) {
     m_PeerScene = {};
     m_Conn.reset();
     m_State = SessionState::Listening;
-    m_Lobby.Clear(true);
+    // Do not preserve the old guest's observed/owned flags for a new peer.
+    m_Lobby.Clear();
+    for (const auto& scene : m_ObservedMissions)
+        m_Lobby.Observe(0, scene);
     m_LobbyLastPeerSerial = 0;
     m_Message = p_Reason + (m_LocalInScene && m_World.IsInScene()
         ? " Still hosting this mission. Your friend can reconnect without restarting."
