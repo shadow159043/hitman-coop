@@ -1,3 +1,14 @@
+HITMAN Co-op - Artur Edition 0.14.2
+
+- Fixes a compatibility blocker on HITMAN game 3.290.1.0: the mod now recognizes
+  its bundled ZHMModSDK 4.2.1.0 instead of incorrectly requiring 4.2.0.0.
+- The separate 3.280 build now correctly uses the 3.280.x / ZHMModSDK 4.1.1.0
+  compatibility pairing. Unknown versions remain blocked for safety.
+- Added automated regression checks covering both supported and rejected pairs.
+- Install this hotfix manually once, since 0.14.1 exits before its updater starts.
+- The separate signed update feed currently remains at 0.14.1; in-game auto updates
+  resume for future versions when a new signed feed is published.
+
 HITMAN Co-op - Artur Edition 0.14.1
 
 - First Artur Edition release with the fork's own signed automatic update feed.

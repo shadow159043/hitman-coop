@@ -4,12 +4,28 @@
 #include <random>
 
 #include "SimNetwork.h"
+#include "../../plugin/Src/NativeRuntimeCompatibility.h"
 #include "TestFramework.h"
 #include "coop/Connection.h"
 #include "coop/Interpolation.h"
 #include "coop/Protocol.h"
 
 using namespace coop;
+
+TEST(NativeRuntime_AcceptsOnlyTheShippedGameSdkPair) {
+    using coop::runtime::Compatible;
+    CHECK(Compatible("3.290.1.0", "4.2.1.0", "3.290"));
+    CHECK(!Compatible("3.290.1.0", "4.2.0.0", "3.290")); // 0.14.1 false-positive blocker
+    CHECK(!Compatible("3.290.1.0", "4.1.1.0", "3.290"));
+    CHECK(!Compatible("3.290.2.0", "4.2.1.0", "3.290")); // unvalidated game patch
+    CHECK(Compatible("3.280.0.0", "4.1.1.0", "3.280"));
+    CHECK(Compatible("3.280.2.0", "4.1.1.0", "3.280"));
+    CHECK(!Compatible("3.280.0.0", "4.2.1.0", "3.280"));
+    CHECK(!Compatible("3.290.1.0", "4.1.1.0", "3.280")); // wrong game target
+    CHECK(!Compatible("unknown", "4.2.1.0", "3.290"));
+    CHECK(!Compatible("3.290.1.0", "unknown", "3.290"));
+    CHECK(!Compatible("3.290.1.0", "4.2.1.0", "unknown"));
+}
 
 TEST(Bytes_RoundTrip) {
     ByteWriter w;

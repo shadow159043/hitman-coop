@@ -1,5 +1,5 @@
 =====================================================
-   HITMAN CO-OP 0.14.1 - ARTUR EDITION
+   HITMAN CO-OP 0.14.2 - ARTUR EDITION
    * created by Jordan Rodrigues *
 =====================================================
 
@@ -8,8 +8,8 @@ No IOI, Peacock, Steam or Epic servers are used: it works with the game online o
 
 INSTALL (both players, the same version)
   1. Close the game.
-  2. Run Windows-PC-Artur-Edition-0.14.1-Setup.exe and click Install.
-     Prefer a zip? Extract all of Windows-PC-Artur-Edition-0.14.1-ZIP-Installer.zip and run
+  2. Run Windows-PC-Artur-Edition-0.14.2-Setup.exe and click Install.
+     Prefer a zip? Extract all of Windows-PC-Artur-Edition-0.14.2-ZIP-Installer.zip and run
      HitmanCoop-Setup.exe from the extracted folder.
   3. Choose how you'll connect: a join code (nothing to set up) or Tailscale (a
      private network between your two PCs; the setup installs it, signs you in in
@@ -33,7 +33,7 @@ IF WINDOWS OR YOUR BROWSER WARNS ABOUT THE DOWNLOAD
   It installs the build for your game version: the current game (3.290.x), or
   3.280.x for players who can't update. Both players need the same game version.
 
-  On Linux / Steam Deck (Proton), extract Linux-PC-Artur-Edition-0.14.1-Installer.tar.gz (or the
+  On Linux / Steam Deck (Proton), extract Linux-PC-Artur-Edition-0.14.2-Installer.tar.gz (or the
   zip), open a terminal in that folder and run:
       bash installer.sh
   To remove it again:

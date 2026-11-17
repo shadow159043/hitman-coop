@@ -1,5 +1,6 @@
 #include "HitmanCoop.h"
 #include "CoopText.h"
+#include "NativeRuntimeCompatibility.h"
 #include "coop/PartnerPresence.h"
 #include "CrashTrace.h"
 #include "BlackBox.h"
@@ -68,9 +69,8 @@ static std::string ToLowerCopy(std::string p_Value) {
     return p_Value;
 }
 
-// Fail closed before game-memory patches if an experimental 3.290 build is loaded
-// with the older August SDK runtime. Matching headers are not enough: the DLL
-// installed beside HITMAN3.exe must be the SDK 4.2.0 binary too.
+// Read the loaded game and SDK versions before any native detours. The validated
+// pairing depends on the target compiled into THIS DLL, not on a global 3.290/4.2.0 constant.
 static std::string ModuleFileVersion(HMODULE s_Module) {
     wchar_t s_Path[MAX_PATH] {};
     if (!s_Module || !GetModuleFileNameW(s_Module, s_Path, MAX_PATH))
@@ -318,13 +318,15 @@ void HitmanCoop::Init() {
     m_LanAddress = coop::LocalLanAddress();
     m_TailscaleAddress = coop::LocalTailscaleAddress();
     LoadSettings();
-    // This isolated compatibility fork specifically targets the October 2026 game.
-    // Refuse all native patches, detours and multiplayer if the game and *loaded*
-    // SDK runtime do not match the verified pairing of SDK headers/runtime.
+    // Keep the hard stop for unknown game/SDK combinations, but use the proper
+    // SDK shipped with each build. 0.14.1 incorrectly required 4.2.0 even though
+    // the pinned 3.290 installer and build use 4.2.1; 3.280 needs SDK 4.1.1.
     const std::string s_FullGameVersion = ModuleFileVersion(GetModuleHandleW(nullptr));
     const std::string s_SdkRuntime = ModuleFileVersion(GetModuleHandleW(L"ZHMModSDK.dll"));
-    if (s_FullGameVersion != "3.290.1.0" || s_SdkRuntime != "4.2.0.0") {
-        m_Unsupported = "game 3.290.1.0 with ZHMModSDK runtime 4.2.0.0 required (loaded " +
+    if (!coop::runtime::Compatible(s_FullGameVersion, s_SdkRuntime, c_GameTarget)) {
+        m_Unsupported = "game " + std::string(coop::runtime::RequiredGame(c_GameTarget)) +
+            " with ZHMModSDK runtime " + std::string(coop::runtime::RequiredSdk(c_GameTarget)) +
+            " required for this " + c_GameTarget + " build (loaded " +
             s_FullGameVersion + " / " + s_SdkRuntime + ")";
         Logger::Error("[HitmanCoop] Experimental build blocked before native hooks: {}", m_Unsupported);
         return;
