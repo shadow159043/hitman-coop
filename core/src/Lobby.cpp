@@ -151,7 +151,7 @@ bool LobbyRoom::Observe(unsigned player, const SceneDesc& scene) {
 }
 bool LobbyRoom::Vote(unsigned player, uint8_t choice) {
     if (player > 1 || m_State.phase != LobbyPhase::Voting || choice >= m_State.count ||
-        m_State.votes[player] == choice) return false;
+        !m_State.CanSelect(choice) || m_State.votes[player] == choice) return false;
     m_State.votes[player] = choice;
     Changed();
     return true;
