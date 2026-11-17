@@ -1197,6 +1197,187 @@ void Session::HandleHello(const MsgHello& p_Hello, double p_Now) {
     SendLobbySnapshot(); // first authoritative lobby state for the accepted guest
 }
 
+// Host-only lobby operations. The reliable connection pins the peer endpoint;
+// the sender serial blocks delayed or duplicated player commands.
+bool Session::LobbyCompatible() const {
+    return m_State == SessionState::Connected && m_Conn &&
+        !m_PeerModVersion.empty() && !m_PeerGameVersion.empty() &&
+        m_Config.modVersion == m_PeerModVersion &&
+        m_Config.gameVersion == m_PeerGameVersion &&
+        m_Config.gameVersion != "unknown";
+}
+bool Session::HasObservedMission(const SceneDesc& scene) const {
+    return std::any_of(m_ObservedMissions.begin(), m_ObservedMissions.end(),
+        [&](const SceneDesc& candidate) { return candidate.SameAs(scene); });
+}
+void Session::RememberLocalMission() {
+    if (!m_World.IsInScene()) return;
+    const auto scene = m_World.CurrentScene();
+    if (!LobbyRoom::ValidScene(scene) || HasObservedMission(scene)) return;
+    if (m_ObservedMissions.size() >= kLobbyOptions)
+        m_ObservedMissions.erase(m_ObservedMissions.begin());
+    m_ObservedMissions.push_back(scene);
+    if (m_Role == SessionRole::Host) {
+        if (m_Lobby.Observe(0, scene) && m_State == SessionState::Connected)
+            SendLobbySnapshot();
+    }
+    else if (m_Role == SessionRole::Client && m_State == SessionState::Connected) {
+        SendLobbyInput({ LobbyInputKind::Observed, 0, kLobbyNoChoice, false, 0, scene });
+    }
+}
+void Session::SendLobbyInput(MsgLobbyInput command) {
+    if (m_Role != SessionRole::Client || m_State != SessionState::Connected || !m_Conn)
+        return;
+    command.serial = ++m_LobbyNextSerial;
+    if (command.serial == 0) command.serial = ++m_LobbyNextSerial;
+    const auto payload = Encode(command);
+    if (payload.size() <= kMaxMessageSize)
+        m_Conn->SendReliable(MsgType::LobbyInput, payload);
+}
+void Session::SendLobbySnapshot() {
+    if (m_Role != SessionRole::Host || !m_Conn || m_State != SessionState::Connected || !m_PeerHandshaken)
+        return;
+    MsgLobbySnapshot state { m_Lobby.State() };
+    const auto payload = Encode(state);
+    if (payload.size() <= kMaxMessageSize)
+        m_Conn->SendReliable(MsgType::LobbySnapshot, payload);
+    else
+        Log(LogLevel::Warn, "lobby", "lobby state is too large for one reliable packet; not sent");
+}
+bool Session::LobbyVote(uint8_t choice) {
+    if (m_State != SessionState::Connected) return false;
+    if (m_Role == SessionRole::Client) {
+        if (m_Lobby.State().phase != LobbyPhase::Voting || choice >= m_Lobby.State().count)
+            return false;
+        SendLobbyInput({ LobbyInputKind::Vote, 0, choice });
+        return true;
+    }
+    if (m_Role != SessionRole::Host || !m_Lobby.Vote(0, choice)) return false;
+    SendLobbySnapshot();
+    return true;
+}
+bool Session::LobbyLock(uint8_t choice) {
+    if (m_Role != SessionRole::Host || !LobbyCompatible() || !m_Lobby.LockWinner(choice))
+        return false;
+    SendLobbySnapshot();
+    return true;
+}
+bool Session::LobbyReady(bool ready) {
+    if (m_State != SessionState::Connected || !LobbyCompatible()) return false;
+    if (m_Role == SessionRole::Client) {
+        if (m_Lobby.State().phase != LobbyPhase::Ready ||
+            !m_Lobby.State().CanSelect(m_Lobby.State().selected)) return false;
+        SendLobbyInput({ LobbyInputKind::Ready, 0, kLobbyNoChoice, ready });
+        return true;
+    }
+    if (m_Role != SessionRole::Host || !m_Lobby.SetReady(0, ready, true)) return false;
+    SendLobbySnapshot();
+    return true;
+}
+bool Session::LobbyStart(double now) {
+    if (m_Role != SessionRole::Host || !m_Lobby.CanLaunch(LobbyCompatible())) return false;
+    if (m_LaunchCounter == 0) {
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        m_LaunchCounter = (static_cast<uint64_t>(stamp) & 0xFFFFFFFFULL) << 32;
+    }
+    if (!m_Lobby.RequestLaunch(++m_LaunchCounter, now, LobbyCompatible())) return false;
+    m_World.Notify("Launch requested. Both players: choose this mission in HITMAN's own mission menu.");
+    SendLobbySnapshot();
+    return true;
+}
+bool Session::LobbyCancel() {
+    if (m_State != SessionState::Connected) return false;
+    if (m_Role == SessionRole::Client) {
+        SendLobbyInput({ LobbyInputKind::Abort, 0, kLobbyNoChoice, false, m_Lobby.State().launchId });
+        return true;
+    }
+    if (m_Role != SessionRole::Host ||
+        !m_Lobby.Abort("The host canceled the mission launch.")) return false;
+    SendLobbySnapshot();
+    return true;
+}
+bool Session::LobbyReturnToVoting() {
+    if (m_State != SessionState::Connected) return false;
+    if (m_Role == SessionRole::Client) {
+        SendLobbyInput({ LobbyInputKind::BackToVoting, 0 });
+        return true;
+    }
+    if (m_Role != SessionRole::Host || !m_Lobby.ReturnToVoting()) return false;
+    SendLobbySnapshot();
+    return true;
+}
+bool Session::LobbyMustWait() const {
+    const SceneDesc* selected = m_Lobby.State().SelectedScene();
+    return m_State == SessionState::Connected && selected && m_World.IsInScene() &&
+        m_Lobby.HoldGameplay() && selected->SameAs(m_World.CurrentScene());
+}
+void Session::HandleLobbyInput(const MsgLobbyInput& command) {
+    bool changed = false;
+    switch (command.kind) {
+    case LobbyInputKind::Observed:
+        changed = m_Lobby.Observe(1, command.scene);
+        break;
+    case LobbyInputKind::Vote:
+        changed = m_Lobby.Vote(1, command.choice);
+        break;
+    case LobbyInputKind::Ready:
+        changed = m_Lobby.SetReady(1, command.ready, LobbyCompatible());
+        break;
+    case LobbyInputKind::Ack:
+        changed = LobbyCompatible() && m_Lobby.State().SelectedScene() &&
+            m_Lobby.State().CanSelect(m_Lobby.State().selected) &&
+            m_Lobby.AcceptLaunch(command.launchId);
+        break;
+    case LobbyInputKind::Loaded:
+        // The host checks real SceneInfo; never trust a scene path inside this command.
+        changed = command.launchId == m_Lobby.State().launchId &&
+            !m_PeerScene.Empty() && m_Lobby.SceneLoaded(1, m_PeerScene);
+        break;
+    case LobbyInputKind::Abort:
+        changed = command.launchId != 0 && command.launchId == m_Lobby.State().launchId &&
+            m_Lobby.Abort("The guest canceled or could not validate mission loading.");
+        break;
+    case LobbyInputKind::BackToVoting:
+        if (m_Lobby.State().phase == LobbyPhase::Failed)
+            changed = m_Lobby.ReturnToVoting();
+        break;
+    }
+    if (changed) SendLobbySnapshot();
+}
+void Session::UpdateLobby(double now) {
+    if (m_Role == SessionRole::Host) {
+        if (m_Lobby.Timeout(now)) SendLobbySnapshot();
+        if (m_Lobby.State().phase == LobbyPhase::Loading && m_Lobby.State().SelectedScene() &&
+            m_World.IsInScene() &&
+            m_Lobby.SceneLoaded(0, m_World.CurrentScene())) SendLobbySnapshot();
+        if (m_Lobby.BeginGameplay(IsSynced())) {
+            m_World.Notify("Both players loaded and synchronized. Begin!");
+            SendLobbySnapshot();
+        }
+    }
+    if (m_Role != SessionRole::Client) return;
+    const auto& state = m_Lobby.State();
+    if (state.phase == LobbyPhase::Request && state.launchId != 0 &&
+        state.launchId != m_LobbyAcceptedId) {
+        if (LobbyCompatible() && state.SelectedScene() && state.CanSelect(state.selected) &&
+            HasObservedMission(*state.SelectedScene())) {
+            m_LobbyAcceptedId = state.launchId;
+            SendLobbyInput({ LobbyInputKind::Ack, 0, kLobbyNoChoice, false, state.launchId });
+        }
+        else {
+            m_LobbyAcceptedId = state.launchId;
+            SendLobbyInput({ LobbyInputKind::Abort, 0, kLobbyNoChoice, false, state.launchId });
+        }
+    }
+    if (state.phase == LobbyPhase::Loading && state.launchId != 0 &&
+        state.launchId != m_LobbyLoadedSentId && m_World.IsInScene() &&
+        state.SelectedScene() && state.SelectedScene()->SameAs(m_World.CurrentScene())) {
+        m_LobbyLoadedSentId = state.launchId;
+        SendClientScene();
+        SendLobbyInput({ LobbyInputKind::Loaded, 0, kLobbyNoChoice, false, state.launchId });
+    }
+}
+
 void Session::SendSceneInfo() {
     if (m_Role != SessionRole::Host || m_State != SessionState::Connected || !m_Conn || !m_PeerHandshaken)
         return;
