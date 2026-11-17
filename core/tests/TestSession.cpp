@@ -100,6 +100,98 @@ struct Duo {
     std::function<void(double)> onStep;
 };
 
+// Real reliable-wire lobby integration with TWO simulated clients. No native
+// HITMAN game process is involved; this tests the actual Session transport.
+TEST(Session_LobbyVotesReadyAndLaunchOnReliableWire) {
+    Duo d(4701);
+    d.HostLoads(c_Miami, 3);
+    d.ClientLoads(c_Miami, 3, 0.f);
+    d.Start();
+    REQUIRE(d.StepUntilSynced(3.0));
+    d.Step(0.5);
+
+    const auto initial = d.host.Status().lobby;
+    REQUIRE(initial.count == 1);
+    REQUIRE(initial.options[0].observed == 3);
+    CHECK(d.client.Status().lobby.count == 1);
+    CHECK(d.host.LobbyCompatible());
+    CHECK(d.client.LobbyCompatible());
+
+    REQUIRE(d.host.LobbyVote(0));
+    REQUIRE(d.client.LobbyVote(0));
+    d.Step(0.6);
+    REQUIRE(d.host.Status().lobby.votes[0] == 0);
+    REQUIRE(d.host.Status().lobby.votes[1] == 0);
+    REQUIRE(d.client.Status().lobby.votes[0] == 0);
+    REQUIRE(d.host.LobbyLock(0));
+    d.Step(0.5);
+    CHECK(d.client.Status().lobby.phase == LobbyPhase::Ready);
+
+    CHECK(!d.host.LobbyStart(d.t)); // both players not ready
+    REQUIRE(d.client.LobbyReady(true));
+    REQUIRE(d.host.LobbyReady(true));
+    d.Step(0.6);
+    CHECK(d.host.Status().lobby.ready[0]);
+    CHECK(d.host.Status().lobby.ready[1]);
+
+    REQUIRE(d.host.LobbyStart(d.t));
+    const uint64_t launch = d.host.Status().lobby.launchId;
+    CHECK(launch != 0);
+    CHECK(!d.host.LobbyStart(d.t)); // no concurrent second launch
+    d.Step(3.0);
+    CHECK(d.host.Status().lobby.phase == LobbyPhase::Playing);
+    CHECK(d.client.Status().lobby.phase == LobbyPhase::Playing);
+    CHECK(d.host.Status().lobby.launchId == launch);
+    CHECK(d.host.Synced() && d.client.Synced());
+    CHECK(!d.host.LobbyMustWait());
+    CHECK(!d.client.LobbyMustWait());
+}
+
+TEST(Session_LobbyWaitsForLateSceneAndCanReturnToVoting) {
+    Duo d(4702);
+    d.HostLoads(c_Miami, 1);
+    d.ClientLoads(c_Miami, 1, 0.f);
+    d.Start();
+    REQUIRE(d.StepUntilSynced(3.0));
+    d.Step(0.5);
+    REQUIRE(d.host.Status().lobby.count == 1);
+    REQUIRE(d.host.Status().lobby.options[0].observed == 3);
+    REQUIRE(d.client.LobbyVote(0));
+    REQUIRE(d.host.LobbyVote(0));
+    d.Step(0.5);
+    REQUIRE(d.host.LobbyLock(0));
+    d.Step(0.5);
+    REQUIRE(d.client.LobbyReady(true));
+    REQUIRE(d.host.LobbyReady(true));
+    d.Step(0.5);
+
+    // The guest returns to HITMAN's normal mission menu BEFORE launch.
+    d.clientWorld.UnloadScene();
+    d.client.OnLocalSceneUnloaded();
+    d.Step(0.4);
+    CHECK(!d.client.Synced());
+    REQUIRE(d.host.LobbyStart(d.t));
+    d.Step(3.0);
+    CHECK(d.host.Status().lobby.phase == LobbyPhase::Loading);
+    CHECK(d.host.Status().lobby.loaded[0]);
+    CHECK(!d.host.Status().lobby.loaded[1]);
+    CHECK(d.host.LobbyMustWait());
+    d.Step(6.0);
+    CHECK(d.host.Status().lobby.phase == LobbyPhase::Loading); // no fake timer start
+
+    d.ClientLoads(c_Miami, 1, 0.f); // manual load through safe game API abstraction
+    REQUIRE(d.StepUntilSynced(4.0));
+    d.Step(3.0);
+    CHECK(d.host.Status().lobby.phase == LobbyPhase::Playing);
+    CHECK(d.client.Status().lobby.phase == LobbyPhase::Playing);
+    REQUIRE(d.host.LobbyReturnToVoting());
+    d.Step(0.5);
+    CHECK(d.host.Status().lobby.phase == LobbyPhase::Voting);
+    CHECK(d.client.Status().lobby.phase == LobbyPhase::Voting);
+    CHECK(!d.host.Status().lobby.ready[0] && !d.host.Status().lobby.ready[1]);
+    CHECK(!d.host.Status().lobby.loaded[0] && !d.host.Status().lobby.loaded[1]);
+}
+
 TEST(Session_HandshakeAndFollowHostMission) {
     Duo d(10);
     d.HostLoads(c_Miami, 10);
