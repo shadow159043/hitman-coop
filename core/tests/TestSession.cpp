@@ -125,7 +125,7 @@ TEST(Session_LobbyVotesReadyAndLaunchOnReliableWire) {
     REQUIRE(d.host.Status().lobby.votes[0] == 0);
     REQUIRE(d.host.Status().lobby.votes[1] == 0);
     REQUIRE(d.client.Status().lobby.votes[0] == 0);
-    REQUIRE(d.host.LobbyLock(0));
+    CHECK(d.host.Status().lobby.phase == LobbyPhase::Ready); // unanimous auto-selection
     d.Step(0.5);
     CHECK(d.client.Status().lobby.phase == LobbyPhase::Ready);
 
@@ -163,7 +163,7 @@ TEST(Session_LobbyWaitsForLateSceneAndCanReturnToVoting) {
     REQUIRE(d.client.LobbyVote(0));
     REQUIRE(d.host.LobbyVote(0));
     d.Step(0.5);
-    REQUIRE(d.host.LobbyLock(0));
+    REQUIRE(d.host.Status().lobby.phase == LobbyPhase::Ready); // unanimous auto-selection
     d.Step(0.5);
     REQUIRE(d.client.LobbyReady(true));
     REQUIRE(d.host.LobbyReady(true));

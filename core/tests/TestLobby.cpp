@@ -32,8 +32,9 @@ TEST(Lobby_MatchingVotesReadyLaunchSlowLoadingAndReplay) {
     REQUIRE(room.Observe(1, Paris()));
     REQUIRE(room.Vote(0, 0));
     REQUIRE(room.Vote(1, 0));
+    CHECK(room.State().phase == LobbyPhase::Ready); // unanimous auto-selection
     CHECK(!room.LockWinner(1)); // host can't override a unanimous vote
-    REQUIRE(room.LockWinner(0));
+    CHECK(!room.LockWinner(0)); // can't silently change after ready phase
     CHECK(room.State().selected == 0);
     CHECK(room.State().phase == LobbyPhase::Ready);
     CHECK(!room.SetReady(0, true, false)); // game / mod mismatch
@@ -90,7 +91,7 @@ TEST(Lobby_TimeoutAndDisconnectRecovery) {
     REQUIRE(room.Observe(1, Miami()));
     REQUIRE(room.Vote(0, 0));
     REQUIRE(room.Vote(1, 0));
-    REQUIRE(room.LockWinner(0));
+    REQUIRE(room.State().phase == LobbyPhase::Ready);
     REQUIRE(room.SetReady(0, true, true));
     REQUIRE(room.SetReady(1, true, true));
     REQUIRE(room.RequestLaunch(3400, 1.0, true));
@@ -103,7 +104,7 @@ TEST(Lobby_TimeoutAndDisconnectRecovery) {
     CHECK(room.State().launchId == 3400);
     REQUIRE(room.Vote(0, 0));
     REQUIRE(room.Vote(1, 0));
-    REQUIRE(room.LockWinner(0));
+    REQUIRE(room.State().phase == LobbyPhase::Ready);
     REQUIRE(room.SetReady(0, true, true));
     REQUIRE(room.SetReady(1, true, true));
     CHECK(!room.RequestLaunch(3400, 150.0, true)); // replay attack

@@ -153,6 +153,15 @@ bool LobbyRoom::Vote(unsigned player, uint8_t choice) {
     if (player > 1 || m_State.phase != LobbyPhase::Voting || choice >= m_State.count ||
         !m_State.CanSelect(choice) || m_State.votes[player] == choice) return false;
     m_State.votes[player] = choice;
+    // Host-authoritative automatic winner when both agents vote alike.
+    // The host chooses explicitly only when the vote is split 1-1.
+    if (m_State.votes[0] != kLobbyNoChoice &&
+        m_State.votes[0] == m_State.votes[1] && m_State.CanSelect(choice)) {
+        m_State.selected = choice;
+        m_State.phase = LobbyPhase::Ready;
+        m_State.ready = { false, false };
+        m_State.loaded = { false, false };
+    }
     Changed();
     return true;
 }
