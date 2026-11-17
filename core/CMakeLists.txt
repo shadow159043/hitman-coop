@@ -12,6 +12,7 @@ add_library(coop_core STATIC
         src/Connection.cpp
         src/GameEvents.cpp
         src/Interpolation.cpp
+        src/Lobby.cpp
         src/Protocol.cpp
         src/RelaySocket.cpp
         src/Session.cpp
@@ -76,6 +77,7 @@ if (COOP_BUILD_TESTS)
             tests/Main.cpp
             tests/TestCore.cpp
             tests/TestGameEvents.cpp
+            tests/TestLobby.cpp
             tests/TestPartnerPresence.cpp
             tests/TestSession.cpp
     )

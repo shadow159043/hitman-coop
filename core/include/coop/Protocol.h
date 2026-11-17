@@ -18,7 +18,8 @@ namespace coop {
 // 19: Artur Edition integration; do not mix different fork builds.
 // 20: mission restarts carry the host scene epoch to reject late requests from a previous run.
 // 21: mission events carry the same epoch, so late item/body/script events cannot affect a new run.
-constexpr uint32_t kProtocolVersion = 21;
+// 22: host-authoritative voting, ready-up, launch IDs and scene-ready negotiation.
+constexpr uint32_t kProtocolVersion = 22;
 
 constexpr uint16_t kDefaultPort = 47047;
 constexpr size_t kMaxPacketSize = 1200;
@@ -60,6 +61,8 @@ enum class MsgType : uint8_t {
     PlayerState,
     NpcCheck,
     NpcClaim,
+    LobbyInput,
+    LobbySnapshot,
     Count,
 };
 

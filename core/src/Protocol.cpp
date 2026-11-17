@@ -39,6 +39,8 @@ const char* MsgTypeName(MsgType p_Type) {
         case MsgType::NpcClaim: return "NpcClaim";
         case MsgType::Pose: return "Pose";
         case MsgType::VictimPose: return "VictimPose";
+        case MsgType::LobbyInput: return "LobbyInput";
+        case MsgType::LobbySnapshot: return "LobbySnapshot";
         default: return "Unknown";
     }
 }
