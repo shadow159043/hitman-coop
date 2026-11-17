@@ -27,15 +27,15 @@ using System.Windows.Forms;
 [assembly: AssemblyProduct("HITMAN Co-op - Artur Edition")]
 [assembly: AssemblyCopyright("Copyright (C) 2026 Jordan Rodrigues. GPL-3.0-or-later.")]
 [assembly: AssemblyTrademark("HITMAN is a trademark of IO Interactive A/S. HITMAN Co-op is a fan project, not made or endorsed by IOI.")]
-[assembly: AssemblyVersion("0.14.2.0")]
-[assembly: AssemblyFileVersion("0.14.2.0")]
-[assembly: AssemblyInformationalVersion("0.14.2")]
+[assembly: AssemblyVersion("0.14.3.0")]
+[assembly: AssemblyFileVersion("0.14.3.0")]
+[assembly: AssemblyInformationalVersion("0.14.3")]
 
 namespace HitmanCoopSetup
 {
     static class Program
     {
-        public const string Version = "0.14.2";
+        public const string Version = "0.14.3";
         public const string Author = "Jordan Rodrigues";
         public const string EditionBy = "Artur";
         public const string Website = "https://github.com/shadow159043/hitman-coop";
@@ -71,6 +71,7 @@ namespace HitmanCoopSetup
                 else if (a == "--auto") o.Auto = true;
                 else if (a == "--no-game-tweaks") Installer.TuneGame = false;
                 else if (a == "--render-pages" && next != null) { o.RenderTo = next; i++; }
+                else if (a == "--self-test-launcher-updater") return LauncherUpdates.SelfTest();
             }
 
             // The admin copy that only adds the firewall rule (see Firewall.AddRuleElevated).
@@ -539,6 +540,14 @@ namespace HitmanCoopSetup
         string m_AuthUrl;
         TailscaleStatus m_Ts;
 
+        // Release lookup runs off the UI thread. Users choose when to download an
+        // update; starting the installer never happens without a button click.
+        LauncherRelease m_AvailableUpdate;
+        bool m_CheckingUpdates, m_CheckedUpdates;
+        string m_UpdateError;
+        Label m_UpdateNotice;
+        Pill m_UpdateButton;
+
         [DllImport("user32.dll")] static extern bool ReleaseCapture();
         [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, int msg, IntPtr w, IntPtr l);
         [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int value, int size);
@@ -802,6 +811,12 @@ namespace HitmanCoopSetup
             t2.Left = t1.Right - Theme.S(8);
             Lbl(m_Page, "Play HITMAN World of Assassination together, with a friend.", Theme.Ui(15), Theme.Dim, 0, Theme.S(164), W, ContentAlignment.TopCenter);
 
+            m_UpdateNotice = Lbl(m_Page, "Checking Artur Edition releases...", Theme.Ui(11.5f), Theme.Faint,
+                Theme.S(110), Theme.S(183), W - Theme.S(335));
+            m_UpdateButton = Btn(m_Page, "Check updates", Pill.Kind.Ghost, W - Theme.S(228), Theme.S(178),
+                Theme.S(118), Theme.S(27), LauncherUpdateClick);
+            UpdateLauncherStatus();
+
             var card = new Card { Bounds = new Rectangle(Theme.S(110), Theme.S(206), W - Theme.S(220), Theme.S(96)) };
             m_Page.Controls.Add(card);
             Pill install = null;
@@ -878,6 +893,112 @@ namespace HitmanCoopSetup
             foreach (var p in made) { p.Left = x0; x0 += p.Width + Theme.S(6); }
 
             Footer();
+            if (!m_CheckedUpdates && !m_CheckingUpdates && m_Options.RenderTo == null)
+                CheckLauncherUpdates();
+        }
+
+        void UpdateLauncherStatus()
+        {
+            if (m_UpdateNotice == null || m_UpdateNotice.IsDisposed ||
+                m_UpdateButton == null || m_UpdateButton.IsDisposed) return;
+
+            if (m_CheckingUpdates)
+            {
+                m_UpdateNotice.Text = "Checking Artur Edition releases...";
+                m_UpdateNotice.ForeColor = Theme.Dim;
+                m_UpdateButton.Text = "Checking...";
+                m_UpdateButton.Enabled = false;
+            }
+            else if (m_AvailableUpdate != null)
+            {
+                m_UpdateNotice.Text = "Artur Edition v" + m_AvailableUpdate.Number + " is available!";
+                m_UpdateNotice.ForeColor = Theme.Amber;
+                m_UpdateButton.Text = "Update now";
+                m_UpdateButton.Style = Pill.Kind.Primary;
+                m_UpdateButton.Enabled = true;
+            }
+            else
+            {
+                m_UpdateNotice.Text = m_UpdateError != null
+                    ? "Couldn't check GitHub releases. Try again."
+                    : m_CheckedUpdates ? "This is the latest Artur Edition installer." : "Check for a newer Artur Edition.";
+                m_UpdateNotice.ForeColor = m_UpdateError != null ? Theme.Amber : Theme.Dim;
+                m_UpdateButton.Text = m_CheckedUpdates ? "Check again" : "Check updates";
+                m_UpdateButton.Style = Pill.Kind.Ghost;
+                m_UpdateButton.Enabled = true;
+            }
+            m_UpdateButton.Invalidate();
+        }
+
+        void CheckLauncherUpdates()
+        {
+            if (m_CheckingUpdates || m_Busy) return;
+            m_CheckingUpdates = true;
+            m_UpdateError = null;
+            UpdateLauncherStatus();
+            var thread = new Thread(delegate()
+            {
+                LauncherRelease result = null;
+                Exception problem = null;
+                try { result = LauncherUpdates.Check(); }
+                catch (Exception error) { problem = error; }
+                Ui(delegate
+                {
+                    m_AvailableUpdate = result;
+                    m_CheckedUpdates = true;
+                    m_CheckingUpdates = false;
+                    m_UpdateError = problem == null ? null : problem.Message;
+                    if (problem != null) Say("Launcher update check: " + problem.Message);
+                    UpdateLauncherStatus();
+                });
+            });
+            thread.IsBackground = true;
+            thread.Start();
+        }
+
+        void LauncherUpdateClick()
+        {
+            if (m_CheckingUpdates || m_Busy) return;
+            if (m_AvailableUpdate == null)
+            {
+                CheckLauncherUpdates();
+                return;
+            }
+            LauncherRelease update = m_AvailableUpdate;
+            if (!Confirm("Download Artur Edition " + update.Number + " from your GitHub release and start its installer?\n\n" +
+                "Close HITMAN before installing. Your current setup will close after the verified download."))
+                return;
+
+            string gamePath = m_Game == null ? null : m_Game.Path;
+            Clear();
+            Heading("Downloading update", "Artur Edition " + update.Number + " from shadow159043/hitman-coop");
+            var bar = new Bar { Bounds = new Rectangle(Theme.S(50), Theme.S(150), W - Theme.S(100), Theme.S(8)) };
+            m_Page.Controls.Add(bar);
+            var status = Lbl(m_Page, "Downloading the new installer...", Theme.Ui(14), Theme.Dim, Theme.S(50), Theme.S(178), W - Theme.S(100));
+            Work(delegate
+            {
+                string verified = LauncherUpdates.DownloadVerified(update, delegate(int percentage)
+                {
+                    Ui(delegate { bar.Value = percentage; });
+                });
+                Ui(delegate { status.Text = "Verified. Launching the new setup..."; });
+                var start = new ProcessStartInfo(verified)
+                {
+                    UseShellExecute = true,
+                    WorkingDirectory = Path.GetDirectoryName(verified),
+                    Arguments = gamePath == null ? "" : "--game " + Util.Quote(gamePath)
+                };
+                if (Process.Start(start) == null)
+                    throw new SetupException("Windows couldn't start the updated installer.");
+            }, delegate(Exception error)
+            {
+                if (error != null)
+                {
+                    ShowError(error, ShowWelcome);
+                    return;
+                }
+                Close();
+            });
         }
 
         // "C:\Program Files (x86)\...\common\HITMAN 3": the start and the end, on one line.

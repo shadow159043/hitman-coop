@@ -1,6 +1,6 @@
 # Artur Edition — integration of Jordan's HITMAN Co-op v0.14.0
 
-**Status:** Artur Edition v0.14.2 fixes the hard-coded SDK compatibility blocker and is the [latest experimental release](https://github.com/shadow159043/hitman-coop/releases/tag/artur-v0.14.2). The previous 0.14.0 release remains available. Live multiplayer and physical Steam Deck update testing are still required.
+**Status:** Artur Edition v0.14.3 adds launcher update checking to the Windows installer and is the [latest experimental release](https://github.com/shadow159043/hitman-coop/releases/tag/artur-v0.14.3). The previous 0.14.0 release remains available. Live multiplayer and physical Steam Deck update testing are still required.
 
 ## Base and preserved work
 
@@ -12,7 +12,7 @@ The underlying game and co-op code is experimental. This merge does not claim to
 
 ## Version and compatibility
 
-* Upstream code base: `0.14.0`; current Artur Edition mod version: `0.14.2`, with **protocol 21** to prevent cross-fork peer mismatches with Jordan's official protocol 18 and the previously shipped Artur protocol 16.
+* Upstream code base: `0.14.0`; current Artur Edition mod version: `0.14.3`, with **protocol 21** to prevent cross-fork peer mismatches with Jordan's official protocol 18 and the previously shipped Artur protocol 16.
 * Both peers must install this same Artur integration when binaries are released; **no** mixing with Jordan v0.14.0 or Artur R2.18.1.
 * The [published R2.18.1 release](https://github.com/shadow159043/hitman-coop/releases/tag/artur-r2.18.1-npc-disguise-safety-20261031) has not been changed.
 * New source-based Linux installation and the old Artur Mission Control AppImage have different payload formats. **Do not use the old R2.18.1 AppImage to install or repair this v0.14.0 integration.** A matching new installer must be built and tested.

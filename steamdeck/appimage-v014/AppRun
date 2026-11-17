@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AppImage runtime mounts the bundled Artur Edition v0.14.2 Linux payload automatically.
+# AppImage runtime mounts the bundled Artur Edition v0.14.3 Linux payload automatically.
 set -euo pipefail
 appdir="${APPDIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)}"
 exec /usr/bin/env bash "$appdir/usr/share/artur-edition/steamdeck-ui.sh" "$@"

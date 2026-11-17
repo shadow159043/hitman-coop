@@ -1,3 +1,15 @@
+HITMAN Co-op - Artur Edition 0.14.3
+
+- Windows setup now checks the fork's latest GitHub release when it opens.
+- The welcome screen shows a prominent Update now action when a newer Artur
+  Edition setup is available; you choose whether to download it.
+- Checks that the download comes from the Artur Edition GitHub release and verifies
+  its SHA-256 against the corresponding release checksum before launching it.
+- Downloads on a worker thread so the launcher stays responsive; no automatic
+  silent installation and no executable is run before verification and consent.
+- An old installer cannot acquire this feature retroactively: install 0.14.3
+  once, then use its Update now button for future releases.
+
 HITMAN Co-op - Artur Edition 0.14.2
 
 - Fixes a compatibility blocker on HITMAN game 3.290.1.0: the mod now recognizes
