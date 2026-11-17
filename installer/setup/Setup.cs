@@ -27,15 +27,15 @@ using System.Windows.Forms;
 [assembly: AssemblyProduct("HITMAN Co-op - Artur Edition")]
 [assembly: AssemblyCopyright("Copyright (C) 2026 Jordan Rodrigues. GPL-3.0-or-later.")]
 [assembly: AssemblyTrademark("HITMAN is a trademark of IO Interactive A/S. HITMAN Co-op is a fan project, not made or endorsed by IOI.")]
-[assembly: AssemblyVersion("0.14.3.0")]
-[assembly: AssemblyFileVersion("0.14.3.0")]
-[assembly: AssemblyInformationalVersion("0.14.3")]
+[assembly: AssemblyVersion("0.14.4.0")]
+[assembly: AssemblyFileVersion("0.14.4.0")]
+[assembly: AssemblyInformationalVersion("0.14.4")]
 
 namespace HitmanCoopSetup
 {
     static class Program
     {
-        public const string Version = "0.14.3";
+        public const string Version = "0.14.4";
         public const string Author = "Jordan Rodrigues";
         public const string EditionBy = "Artur";
         public const string Website = "https://github.com/shadow159043/hitman-coop";

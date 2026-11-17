@@ -1,3 +1,21 @@
+HITMAN Co-op - Artur Edition 0.14.4 (DEV PREVIEW)
+
+- Network protocol 22: adds host-authoritative two-player mission voting,
+  host resolution of tied votes, separate player ready/unready actions, unique
+  launch request IDs, client validation and scene-ready acknowledgments.
+- New Lobby tab in the in-game overlay with real observed mission IDs (up to
+  two recent missions), vote statuses, selected contract, ready markers,
+  actual load-state indicators, cancellation and return-to-voting controls.
+- Only missions already observed in both players' games can be chosen. This
+  is a conservative prerequisite, not an entitlement/DLC ownership API.
+- Loading uses HITMAN's normal mission menu as a SAFE manual fallback.
+  The mod does not yet use undocumented memory offsets to force mission loads.
+- Uses the existing game-loop pause hook to hold the first loaded mission
+  until the peer scene matches and the co-op session synchronizes.
+- Includes scene-validation, stale command, timeout, disconnect and replay
+  protections; physical two-client mission tests are still required.
+- DEVELOPMENT BRANCH ONLY. Not yet published as a user release.
+
 HITMAN Co-op - Artur Edition 0.14.3
 
 - Windows setup now checks the fork's latest GitHub release when it opens.

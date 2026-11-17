@@ -2,7 +2,7 @@
 # Fork-specific Steam Deck/Linux AppImage update checker. No installation unless
 # the player explicitly chooses Update; the current AppImage is never overwritten.
 set -euo pipefail
-current_version="0.14.3"
+current_version="0.14.4"
 repo="shadow159043/hitman-coop"
 api="https://api.github.com/repos/$repo/releases/latest"
 release_base="https://github.com/$repo/releases/download"
@@ -118,9 +118,9 @@ EOF
 
 selftest() {
   local good bad
-  good='{"tag_name":"artur-v0.14.4","draft":false,"prerelease":false,"assets":[{"name":"Steam-Deck-Artur-Edition-0.14.4-Installer.AppImage","browser_download_url":"https://github.com/shadow159043/hitman-coop/releases/download/artur-v0.14.4/Steam-Deck-Artur-Edition-0.14.4-Installer.AppImage"},{"name":"Steam-Deck-Artur-Edition-0.14.4-Installer.AppImage.sha256","browser_download_url":"https://github.com/shadow159043/hitman-coop/releases/download/artur-v0.14.4/Steam-Deck-Artur-Edition-0.14.4-Installer.AppImage.sha256"}]}'
-  [[ "$(printf '%s' "$good" | parse_release "")" == "0.14.4" ]] || return 1
-  [[ "$(printf '%s' "$good" | parse_release "0.14.4")" == "0.14.4" ]] || return 1
+  good='{"tag_name":"artur-v0.14.5","draft":false,"prerelease":false,"assets":[{"name":"Steam-Deck-Artur-Edition-0.14.5-Installer.AppImage","browser_download_url":"https://github.com/shadow159043/hitman-coop/releases/download/artur-v0.14.5/Steam-Deck-Artur-Edition-0.14.5-Installer.AppImage"},{"name":"Steam-Deck-Artur-Edition-0.14.5-Installer.AppImage.sha256","browser_download_url":"https://github.com/shadow159043/hitman-coop/releases/download/artur-v0.14.5/Steam-Deck-Artur-Edition-0.14.5-Installer.AppImage.sha256"}]}'
+  [[ "$(printf '%s' "$good" | parse_release "")" == "0.14.5" ]] || return 1
+  [[ "$(printf '%s' "$good" | parse_release "0.14.4")" == "0.14.5" ]] || return 1
   if printf '%s' "$good" | parse_release "0.14.5" >/dev/null; then return 1; fi
   bad="${good//shadow159043\/hitman-coop/someotherfork\/hitman-coop}"
   if printf '%s' "$bad" | parse_release "" >/dev/null; then return 1; fi

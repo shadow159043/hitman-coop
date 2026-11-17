@@ -1,6 +1,6 @@
 # HITMAN Co-op — Artur Edition
 
-**Latest release: [Artur Edition 0.14.3 (Experimental)](https://github.com/shadow159043/hitman-coop/releases/tag/artur-v0.14.3), protocol 21.** The Windows setup now checks for newer Artur Edition releases and offers a verified, one-click download-and-launch flow. Previous setup versions cannot update themselves retroactively. Corrects the game/SDK compatibility blocker in 0.14.0 and 0.14.1. Install this hotfix manually; the earlier versions cannot initialize their in-game updater. Automated tests and installers pass, but this build still needs real two-player gameplay and physical Steam Deck testing.
+**Latest published release: [Artur Edition 0.14.3 (Experimental)](https://github.com/shadow159043/hitman-coop/releases/tag/artur-v0.14.3), protocol 21.** The Windows setup now checks for newer Artur Edition releases and offers a verified, one-click download-and-launch flow. Previous setup versions cannot update themselves retroactively. Corrects the game/SDK compatibility blocker in 0.14.0 and 0.14.1. Install this hotfix manually; the earlier versions cannot initialize their in-game updater. Automated tests and installers pass, but this build still needs real two-player gameplay and physical Steam Deck testing.
 
 This project incorporates Jordan Rodrigues's [HITMAN Co-op v0.14.0](https://github.com/JordanRodrigues021/hitman-coop/releases/tag/v0.14.0), including the new NPC, item, crash-reporting and Windows/Linux installer improvements. The separate **Artur Edition** retains its custom branding, extra avatar diagnostics, safer partner outfit handling and its one-file Linux Mission Control installer.
 
@@ -392,3 +392,8 @@ Made by Jordan Rodrigues, with a lot of help from the people above. Full credits
 OrfeasZ and contributors.
 
 Licensed under the GPL-3.0, see [LICENSE](LICENSE).
+
+ 
+### Under development: Artur Edition 0.14.4 / protocol 22 (not a published release)
+
+The [two-player host-authoritative lobby development branch](https://github.com/shadow159043/hitman-coop/tree/feature/artur-lobby-ui-integration) adds mission voting, host tie-break, player ready/unready, launch IDs, shared state, and a visible loading/waiting stage. It uses only real scene descriptors that the game has loaded. Automatic menu navigation, verified DLC ownership, contract thumbnails, and real two-PC gameplay are **not implemented or validated** yet. Do not mix protocol 22 dev builds with published protocol 21 installers. Its current mission start uses HITMAN's native menus plus the existing co-op pause/wait hooks.
