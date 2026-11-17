@@ -103,7 +103,9 @@ struct Duo {
 // Real reliable-wire lobby integration with TWO simulated clients. No native
 // HITMAN game process is involved; this tests the actual Session transport.
 TEST(Session_LobbyVotesReadyAndLaunchOnReliableWire) {
-    Duo d(4701);
+    SessionConfig valid;
+    valid.gameVersion = "3.290.1";
+    Duo d(4701, valid, valid);
     d.HostLoads(c_Miami, 3);
     d.ClientLoads(c_Miami, 3, 0.f);
     d.Start();
@@ -148,7 +150,9 @@ TEST(Session_LobbyVotesReadyAndLaunchOnReliableWire) {
 }
 
 TEST(Session_LobbyWaitsForLateSceneAndCanReturnToVoting) {
-    Duo d(4702);
+    SessionConfig valid;
+    valid.gameVersion = "3.290.1";
+    Duo d(4702, valid, valid);
     d.HostLoads(c_Miami, 1);
     d.ClientLoads(c_Miami, 1, 0.f);
     d.Start();
