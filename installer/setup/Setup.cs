@@ -49,7 +49,7 @@ namespace HitmanCoopSetup
         public class Options
         {
             public string Game;
-            public bool Uninstall, Silent, Register, KeepSettings = true, Auto;
+            public bool Uninstall, Restore, Silent, Register, KeepSettings = true, Auto;
             public string Log, FirewallExe, RenderTo;
         }
 
@@ -65,13 +65,14 @@ namespace HitmanCoopSetup
                 else if (a == "--log" && next != null) { o.Log = next; i++; }
                 else if (a == "--firewall-rule" && next != null) { o.FirewallExe = next; i++; }
                 else if (a == "--uninstall") o.Uninstall = true;
+                else if (a == "--restore") o.Restore = true;
                 else if (a == "--silent" || a == "/s") o.Silent = true;
                 else if (a == "--register") o.Register = true;
                 else if (a == "--remove-settings") o.KeepSettings = false;
                 else if (a == "--auto") o.Auto = true;
                 else if (a == "--no-game-tweaks") Installer.TuneGame = false;
                 else if (a == "--render-pages" && next != null) { o.RenderTo = next; i++; }
-                else if (a == "--self-test-launcher-updater") return LauncherUpdates.SelfTest();
+                else if (a == "--self-test-launcher-updater") return LauncherUpdates.SelfTest() | LauncherReliability.SelfTest();
             }
 
             // The admin copy that only adds the firewall rule (see Firewall.AddRuleElevated).
@@ -112,7 +113,11 @@ namespace HitmanCoopSetup
                     return 0;
                 }
                 GameInstall game = Games.Inspect(dir);
-                if (o.Uninstall)
+                if (o.Restore)
+                {
+                    RestorePoints.RestoreLatest(game.Retail, say);
+                }
+                else if (o.Uninstall)
                 {
                     Installer.Uninstall(game, o.KeepSettings, say);
                     if (o.Register || string.Equals(AppsEntry.LastGame(), game.Path, StringComparison.OrdinalIgnoreCase)) AppsEntry.Unregister();
@@ -792,6 +797,7 @@ namespace HitmanCoopSetup
                     Footer();
                 }
                 else if (m_Options.Uninstall && m_Game != null) { if (m_Options.Auto) RunUninstall(m_Options.KeepSettings); else ShowUninstall(); }
+                else if (m_Options.Restore && m_Game != null) RunRestore();
                 else if (m_Options.Auto && m_Game != null) RunInstall();
                 else ShowWelcome();
             });
@@ -873,6 +879,21 @@ namespace HitmanCoopSetup
             install.Font = Theme.Ui(17, true);
             install.Enabled = m_Game != null;
             AcceptButtonOf(install);
+
+            // The integrity check never changes files; only the player's separate
+            // Repair/Restore decision can modify a closed HITMAN installation.
+            if (m_Game != null && m_Game.InstalledModVersion != null)
+            {
+                int top = install.Top;
+                Btn(m_Page, "Check & repair", Pill.Kind.Secondary, install.Left - Theme.S(205),
+                    top + Theme.S(5), Theme.S(195), Theme.S(42), ShowDiagnostics);
+                var restore = Btn(m_Page, "Restore previous", Pill.Kind.Secondary,
+                    install.Right + Theme.S(10), top + Theme.S(5), Theme.S(195), Theme.S(42), RunRestore);
+                restore.Enabled = RestorePoints.CanRestore(m_Game.Retail);
+                m_Tip.SetToolTip(restore, restore.Enabled
+                    ? "Recover the last Artur release using a backup made before upgrading."
+                    : "A restore point is created automatically before your next Artur version upgrade.");
+            }
 
             var links = new List<KeyValuePair<string, Action>>();
             if (m_Game != null && m_Game.InstalledModVersion != null) links.Add(new KeyValuePair<string, Action>("Uninstall", ShowUninstall));
@@ -1063,6 +1084,89 @@ namespace HitmanCoopSetup
                 if (!m_Found.Any(f => f.Path.Equals(m_Game.Path, StringComparison.OrdinalIgnoreCase))) m_Found.Add(m_Game);
                 ShowWelcome();
             }
+        }
+
+        // ---- Compatibility / recovery -----------------------------------------------------------
+
+        void ShowDiagnostics()
+        {
+            if (m_Game == null) { ShowWelcome(); return; }
+            Clear();
+            Heading("Checking installation", "Game, loader and Artur Edition files are checked without changing anything.");
+            var status = Lbl(m_Page, "Comparing local files and versions...", Theme.Ui(14), Theme.Dim,
+                Theme.S(50), Theme.S(150), W - Theme.S(100));
+            GameInstall game = m_Game;
+            Work(delegate
+            {
+                var problems = LauncherReliability.Diagnose(game);
+                Ui(delegate
+                {
+                    if (status.IsDisposed) return;
+                    Clear();
+                    Heading(problems.Count == 0 ? "Installation looks good" : "Repair recommended",
+                        problems.Count == 0
+                            ? "The installed game/SDK/mod files match this launcher. Gameplay must still be tested."
+                            : problems.Count + " installation problem(s) found:");
+                    string detail = problems.Count == 0
+                        ? "Version " + Program.Version + " / " + game.Version + " — compatible files detected."
+                        : String.Join("\n", problems.Take(9).Select(x => "• " + x).ToArray());
+                    Lbl(m_Page, detail, Theme.Ui(13), problems.Count == 0 ? Theme.Green : Theme.Amber,
+                        Theme.S(65), Theme.S(130), W - Theme.S(130));
+                    Btn(m_Page, "Back", Pill.Kind.Secondary, Theme.S(205), H - Theme.S(100),
+                        Theme.S(170), Theme.S(45), ShowWelcome);
+                    Btn(m_Page, "Repair automatically", Pill.Kind.Primary, Theme.S(390), H - Theme.S(100),
+                        Theme.S(225), Theme.S(45), delegate
+                        {
+                            if (Confirm("Repair this installation using the verified files bundled with this launcher?\n\nClose HITMAN first."))
+                                RunInstall();
+                        });
+                    Footer();
+                });
+            }, delegate(Exception error)
+            {
+                if (error != null) ShowError(error, ShowDiagnostics);
+            });
+        }
+
+        void RunRestore()
+        {
+            if (m_Game == null || !RestorePoints.CanRestore(m_Game.Retail))
+            {
+                ShowError(new SetupException("No previous Artur Edition installation is backed up yet."), ShowWelcome);
+                return;
+            }
+            if (Games.GameRunning())
+            {
+                ShowError(new SetupException("HITMAN is running.", "Close the game before restoring your previous mod."), RunRestore);
+                return;
+            }
+            if (!Confirm("Restore the previous Artur Edition installation?\n\nThis restores the old mod files AND the older mods.ini. Changes made to those files since that backup will be replaced. Your current installation is backed up first."))
+                return;
+            if (!Util.CanWrite(m_Game.Retail) && !Util.IsAdmin())
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo(Program.ExePath,
+                        "--restore --auto --game " + Util.Quote(m_Game.Path)) { UseShellExecute = true, Verb = "runas" });
+                    Close();
+                }
+                catch { ShowError(new SetupException("Windows needs your permission to restore the files."), RunRestore); }
+                return;
+            }
+            Clear();
+            Heading("Restoring previous version", "Restoring the last verified Artur Edition installation snapshot.");
+            var status = Lbl(m_Page, "Saving the current installation before rollback...",
+                Theme.Ui(14), Theme.Dim, Theme.S(55), Theme.S(160), W - Theme.S(110));
+            GameInstall game = m_Game;
+            Work(delegate { RestorePoints.RestoreLatest(game.Retail, Say); }, delegate(Exception error)
+            {
+                if (error != null) { ShowError(error, RunRestore); return; }
+                m_Game = Games.Inspect(game.Path);
+                status.Text = "Previous version restored.";
+                ShowWelcome();
+                MessageBox.Show(this, "The previous Artur Edition installation was restored.\n\nRestart HITMAN to load it.",
+                    "Artur Edition rollback complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            });
         }
 
         // ---- Install ----------------------------------------------------------------------------

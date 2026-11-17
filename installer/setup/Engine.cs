@@ -590,6 +590,13 @@ namespace HitmanCoopSetup
                 log("Found mod loader (ZHMModSDK) " + theirs + "; HITMAN Co-op needs " + ours + ". The old one is backed up and comes back if you uninstall.");
 
             InstallManifest previous = InstallManifest.Load(retail);
+            if (previous != null && !String.Equals(previous.Version, Program.Version, StringComparison.Ordinal))
+            {
+                // Reversible upgrades: a failed backup must stop the installation
+                // BEFORE any mod/loader files are overwritten.
+                progress(7, "Backing up your previous Artur Edition version");
+                RestorePoints.Capture(retail, log);
+            }
             string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
             string backupRel = "HitmanCoop-backup\\" + stamp;
             var manifest = new InstallManifest { Installed = stamp, Version = Program.Version, Build = build };
@@ -935,6 +942,32 @@ namespace HitmanCoopSetup
                 if (!string.Equals(Path.GetFullPath(Program.ExePath), Path.GetFullPath(copy), StringComparison.OrdinalIgnoreCase))
                     File.Copy(Program.ExePath, copy, true);
 
+                // One-file installers already embed their payload. A ZIP installer
+                // does not: persist its matching files too, so the Start menu
+                // launcher can perform a future repair without the old ZIP.
+                if (!Payload.Embedded && Payload.Dir != null &&
+                    !string.Equals(Path.GetFullPath(Payload.Dir).TrimEnd('\\'),
+                        Path.GetFullPath(Folder).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+                {
+                    foreach (string name in new[] { "files", "files-3.280" })
+                    {
+                        string src = Path.Combine(Payload.Dir, name);
+                        if (!Directory.Exists(src)) continue;
+                        foreach (string file in Directory.GetFiles(src, "*", SearchOption.AllDirectories))
+                        {
+                            string rel = Util.RelativeTo(Payload.Dir, file);
+                            string dest = Path.Combine(Folder, rel);
+                            Directory.CreateDirectory(Path.GetDirectoryName(dest));
+                            Util.CopyWithRetry(file, dest);
+                        }
+                    }
+                    string checksums = Path.Combine(Payload.Dir, "checksums.txt");
+                    if (File.Exists(checksums))
+                        File.Copy(checksums, Path.Combine(Folder, "checksums.txt"), true);
+                }
+
+                CreateLauncherShortcut(copy);
+
                 long kb = 0;
                 try { kb = Directory.GetFiles(Payload.FilesFor(game.Build), "*", SearchOption.AllDirectories).Sum(f => new FileInfo(f).Length) / 1024; }
                 catch { }
@@ -962,9 +995,42 @@ namespace HitmanCoopSetup
             }
         }
 
+        static string ShortcutPath
+        {
+            get
+            {
+                return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs),
+                    "HITMAN Co-op - Artur Edition.lnk");
+            }
+        }
+
+        static void CreateLauncherShortcut(string exe)
+        {
+            try
+            {
+                // WScript.Shell COM is included with Windows; late binding avoids
+                // any external installer dependency or scripting subprocess.
+                Type shellType = Type.GetTypeFromProgID("WScript.Shell");
+                if (shellType == null) return;
+                object shell = Activator.CreateInstance(shellType);
+                object shortcut = shellType.InvokeMember("CreateShortcut",
+                    BindingFlags.InvokeMethod, null, shell, new object[] { ShortcutPath });
+                Type link = shortcut.GetType();
+                link.InvokeMember("TargetPath", BindingFlags.SetProperty, null, shortcut, new object[] { exe });
+                link.InvokeMember("WorkingDirectory", BindingFlags.SetProperty, null, shortcut,
+                    new object[] { Path.GetDirectoryName(exe) });
+                link.InvokeMember("Description", BindingFlags.SetProperty, null, shortcut,
+                    new object[] { "Manage, repair and update HITMAN Co-op - Artur Edition" });
+                link.InvokeMember("Save", BindingFlags.InvokeMethod, null, shortcut, new object[0]);
+            }
+            catch { /* Setup remains usable via Settings > Apps and its installed EXE. */ }
+        }
+
         public static void Unregister()
         {
             try { Registry.CurrentUser.DeleteSubKeyTree(Key, false); }
+            catch { }
+            try { if (File.Exists(ShortcutPath)) File.Delete(ShortcutPath); }
             catch { }
         }
 
