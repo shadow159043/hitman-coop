@@ -121,7 +121,7 @@ selftest() {
   good='{"tag_name":"artur-v0.14.5","draft":false,"prerelease":false,"assets":[{"name":"Steam-Deck-Artur-Edition-0.14.5-Installer.AppImage","browser_download_url":"https://github.com/shadow159043/hitman-coop/releases/download/artur-v0.14.5/Steam-Deck-Artur-Edition-0.14.5-Installer.AppImage"},{"name":"Steam-Deck-Artur-Edition-0.14.5-Installer.AppImage.sha256","browser_download_url":"https://github.com/shadow159043/hitman-coop/releases/download/artur-v0.14.5/Steam-Deck-Artur-Edition-0.14.5-Installer.AppImage.sha256"}]}'
   [[ "$(printf '%s' "$good" | parse_release "")" == "0.14.5" ]] || return 1
   [[ "$(printf '%s' "$good" | parse_release "0.14.4")" == "0.14.5" ]] || return 1
-  if printf '%s' "$good" | parse_release "0.14.5" >/dev/null; then return 1; fi
+  if printf '%s' "$good" | parse_release "0.14.6" >/dev/null; then return 1; fi
   bad="${good//shadow159043\/hitman-coop/someotherfork\/hitman-coop}"
   if printf '%s' "$bad" | parse_release "" >/dev/null; then return 1; fi
   echo "Steam Deck updater release validation passed (offline)."
