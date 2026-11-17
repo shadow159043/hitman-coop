@@ -4,12 +4,14 @@
 set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 installer="$root/installer.sh"
+updater="$root/steamdeck-updater.sh"
 title="HITMAN Co-op - Artur Edition 0.14.3 | Mission Control (EXPERIMENTAL)"
 [[ -f "$installer" && -f "$root/files/mods/HitmanCoop.dll" ]] ||
   { echo "Missing bundled Artur 0.14.3 Linux runtime" >&2; exit 1; }
 mode=auto
 case "${1:-}" in
   --status) mode=status ;;
+  --selftest-update) exec bash "$updater" --selftest ;;
   --terminal) mode=terminal ;;
   --gui|'') mode=auto ;;
   --help|-h) echo "Usage: AppImage [--status|--gui|--terminal]"; exit 0 ;;
@@ -30,6 +32,7 @@ status_text() {
   else
     printf 'Detected HITMAN folder: not found (manual selection offered during Install)\n'
   fi
+  printf 'Use Check updates to download a newer verified AppImage, if one exists.\n'
   printf 'This is an installer, not proof that HITMAN or multiplayer works on Steam Deck.\n'
 }
 if [[ "$mode" == status ]]; then status_text; exit 0; fi
@@ -104,8 +107,36 @@ verify_game() {
   echo "PASS: mod loader files and [HitmanCoop] entry present."
   echo "This verifies installation files, not in-game DLL loading or network connections."
 }
+run_update() {
+  local logfile latest downloaded
+  logfile="$(mktemp)"
+  if ! latest="$(bash "$updater" --check 2>"$logfile")"; then
+    show_results "$logfile" 0 || true
+    rm -f "$logfile"
+    return
+  fi
+  rm -f "$logfile"
+  if [[ -z "$latest" ]]; then
+    message "This is already the latest Artur Edition Steam Deck installer."
+    return
+  fi
+  ask "Artur Edition $latest is available.\n\nDownload and verify the new Steam Deck AppImage? Your current AppImage will be kept." || return
+  logfile="$(mktemp)"
+  if ! downloaded="$(bash "$updater" --download "$latest" 2>"$logfile")"; then
+    show_results "$logfile" 0 || true
+    rm -f "$logfile"
+    return
+  fi
+  rm -f "$logfile"
+  message "Artur Edition $latest is verified and saved to:\n$downloaded\n\nYou can open the new launcher from the Applications menu."
+  if ask "Open the updated Steam Deck installer now?"; then
+    exec env APPIMAGE_EXTRACT_AND_RUN=1 "$downloaded" --gui
+  fi
+}
+
 run_action() {
   local action="$1" logfile="" ok=0 game=""
+  if [[ "$action" == update ]]; then run_update; return; fi
   if [[ "$action" == launch ]]; then
     ask "Launch HITMAN through the official Steam entry?" || return 0
     command -v steam >/dev/null 2>&1 && steam "steam://rungameid/1659040" || message "Please launch HITMAN from Steam."
@@ -130,19 +161,19 @@ menu() {
   local prompt=""
   prompt="$(status_text)"
   case "$backend" in
-    kdialog) kdialog --title "$title" --menu "$prompt" install 'Install or update' verify 'Verify installed files' repair 'Reinstall / repair' launch 'Launch HITMAN via Steam' uninstall 'Uninstall / restore' status 'View status' quit 'Exit' ;;
-    zenity) zenity --title="$title" --list --width=800 --height=550 --text="$prompt" --column='Action' --column='Description' --print-column=1 install 'Install or update' verify 'Verify installed files' repair 'Reinstall / repair' launch 'Launch HITMAN via Steam' uninstall 'Uninstall / restore' status 'View status' quit 'Exit' ;;
+    kdialog) kdialog --title "$title" --menu "$prompt" update 'Check for installer updates' install 'Install or repair' verify 'Verify installed files' repair 'Reinstall / repair' launch 'Launch HITMAN via Steam' uninstall 'Uninstall / restore' status 'View status' quit 'Exit' ;;
+    zenity) zenity --title="$title" --list --width=800 --height=550 --text="$prompt" --column='Action' --column='Description' --print-column=1 update 'Check for installer updates' install 'Install or repair' verify 'Verify installed files' repair 'Reinstall / repair' launch 'Launch HITMAN via Steam' uninstall 'Uninstall / restore' status 'View status' quit 'Exit' ;;
     terminal)
       printf '%s\n' "$prompt" >&2
-      printf '1 Install | 2 Verify | 3 Repair | 4 Launch | 5 Uninstall | 6 Status | 7 Quit\n' >&2
+      printf '1 Updates | 2 Install | 3 Verify | 4 Repair | 5 Launch | 6 Uninstall | 7 Status | 8 Quit\n' >&2
       local answer=""; read -r -p "Choose: " answer || return 1
-      case "$answer" in 1) echo install;; 2) echo verify;; 3) echo repair;; 4) echo launch;; 5) echo uninstall;; 6) echo status;; 7) echo quit;; *) echo invalid;; esac ;;
+      case "$answer" in 1) echo update;; 2) echo install;; 3) echo verify;; 4) echo repair;; 5) echo launch;; 6) echo uninstall;; 7) echo status;; 8) echo quit;; *) echo invalid;; esac ;;
   esac
 }
 while :; do
   action="$(menu)" || break
   case "$action" in
-    install|verify|repair|uninstall|launch) run_action "$action" ;;
+    update|install|verify|repair|uninstall|launch) run_action "$action" ;;
     status) message "$(status_text)" ;;
     quit|'') break ;;
     *) message "Choose one of the listed actions." ;;
