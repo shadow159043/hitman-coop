@@ -187,6 +187,7 @@ private:
     void UpdateWaitForPartner(double p_Now, const coop::SessionStatus& p_Status);
     double m_WaitEligibleUntil = 0.0;
     bool m_Waiting = false;
+    bool m_LobbyWaiting = false; // strict launch hold; must release immediately on abort/disconnect
     double m_WaitStart = 0.0;
     double m_PeerBusySeenAt = -100.0;
     std::atomic<bool> m_SkipWait { false };

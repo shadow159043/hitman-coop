@@ -1276,13 +1276,24 @@ void HitmanCoop::UpdateWaitForPartner(double p_Now, const coop::SessionStatus& p
     // own timeout/disconnect. This is the game's existing named pause request,
     // not a custom memory patch or a simulated UI countdown.
     if (m_Session && m_Session->LobbyMustWait() && GamePause::Available()) {
-        if (!m_Waiting) {
+        if (!m_LobbyWaiting) {
             m_Waiting = true;
             m_WaitStart = p_Now;
             m_World.Notify("Multiplayer mission on hold until both scenes are loaded and synchronized.");
         }
+        m_LobbyWaiting = true;
         m_SkipWait = false;
         GamePause::SetWaitPause(true);
+        return;
+    }
+    // If the host aborts, times out, disconnects, or completes the synchronized
+    // start, release this named pause immediately. Do not accidentally inherit
+    // the older best-effort wait's timer when a lobby launch has already ended.
+    if (m_LobbyWaiting) {
+        m_LobbyWaiting = false;
+        m_Waiting = false;
+        m_WaitEligibleUntil = 0.0;
+        GamePause::SetWaitPause(false);
         return;
     }
     const bool s_Connected = p_Status.state == coop::SessionState::Connected;
