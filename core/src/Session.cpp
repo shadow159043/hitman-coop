@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <cstdio>
 
 #include <limits>
@@ -77,12 +78,16 @@ void Session::Host(std::unique_ptr<IDatagramSocket> p_Socket) {
     m_Message = "Hosting. Waiting for a friend to join.";
     m_PeerHandshaken = false;
     m_PeerReadyEpoch = 0;
+    m_Lobby.Clear();
+    m_LobbyLastPeerSerial = 0;
+    m_ObservedMissions.clear();
 
     // The host may already be in a mission when it starts hosting.
     m_LocalInScene = m_World.IsInScene();
 
     if (m_LocalInScene && ++m_Epoch == 0)
         ++m_Epoch;
+    if (m_LocalInScene) RememberLocalMission();
 
     Log(LogLevel::Info, "net", "hosting (mod %s, protocol %u, game %s, %s)", m_Config.modVersion.c_str(), kProtocolVersion,
         m_Config.gameVersion.c_str(), m_LocalInScene ? "already in a mission" : "not in a mission yet");
@@ -102,6 +107,12 @@ void Session::Join(std::unique_ptr<IDatagramSocket> p_Socket, const Endpoint& p_
     m_HostScene = {};
     m_LocalReadyEpoch = 0;
     m_LocalInScene = m_World.IsInScene();
+    m_Lobby.Clear();
+    m_LobbyNextSerial = 0;
+    m_LobbyLoadedSentId = 0;
+    m_LobbyAcceptedId = 0;
+    m_ObservedMissions.clear();
+    if (m_LocalInScene) RememberLocalMission();
 
     Log(LogLevel::Info, "net", "joining %s %s (mod %s, protocol %u, game %s)", p_Host.IsRelay() ? "through the co-op server," : "directly,",
         p_Host.ToString().c_str(), m_Config.modVersion.c_str(), kProtocolVersion, m_Config.gameVersion.c_str());
@@ -142,6 +153,8 @@ void Session::Leave(const std::string& p_Reason, double p_Now) {
     m_PeerReadyEpoch = 0;
     m_LocalReadyEpoch = 0;
     m_HasRemoteOutfit = false;
+    m_Lobby.Clear();
+    m_ObservedMissions.clear();
 }
 
 void Session::KickPeer(const std::string& p_Reason, double p_Now) {
@@ -165,6 +178,7 @@ void Session::Fail(const std::string& p_Reason) {
     m_PeerStateAt = -1.0;
     m_PeerHandshaken = false;
     m_HasRemoteOutfit = false;
+    m_Lobby.Abort("Disconnected: return to voting and reconnect.");
     m_World.Notify(p_Reason);
 }
 
@@ -174,6 +188,8 @@ void Session::DropPeer(const std::string& p_Reason) {
     m_PeerScene = {};
     m_Conn.reset();
     m_State = SessionState::Listening;
+    m_Lobby.Clear(true);
+    m_LobbyLastPeerSerial = 0;
     m_Message = p_Reason + (m_LocalInScene && m_World.IsInScene()
         ? " Still hosting this mission. Your friend can reconnect without restarting."
         : " Waiting for a friend to join.");
@@ -215,6 +231,7 @@ void Session::ResetSceneState() {
 void Session::OnLocalSceneLoaded() {
     ResetSceneState();
     m_LocalInScene = true;
+    RememberLocalMission();
 
     if (m_Role == SessionRole::Host) {
         ++m_Epoch;
@@ -231,6 +248,7 @@ void Session::OnLocalSceneLoaded() {
     }
     else if (m_Role == SessionRole::Client) {
         m_LocalReadyEpoch = 0;
+        SendClientScene(); // host validates the actual scene, not a claimed launch status
     }
 
     // Our load is done: the partner stops waiting.
@@ -446,6 +464,7 @@ SessionStatus Session::Status() const {
         s_Status.peerSilence = std::max(0.0, m_LastTick - m_Conn->LastReceiveTime());
 
     s_Status.floodDropped = m_FloodDropped;
+    s_Status.lobby = m_Lobby.State();
     return s_Status;
 }
 
@@ -528,6 +547,7 @@ void Session::Tick(double p_Now, float p_Dt) {
         UpdateLink(p_Now);
         UpdatePlayerState(p_Now);
         UpdateScene();
+        UpdateLobby(p_Now);
         UpdateOutfit();
         UpdateSkeleton(p_Now);
         UpdateAvatar(p_Now);
@@ -670,6 +690,9 @@ void Session::HandleMessage(const Message& p_Msg, double p_Now) {
             m_Message = "Connected to " + m_PeerName + ".";
             m_World.Notify("Connected to " + m_PeerName + ".");
 
+            for (const auto& scene : m_ObservedMissions)
+                SendLobbyInput({ LobbyInputKind::Observed, 0, kLobbyNoChoice, false, 0, scene });
+
             if (VersionsDiffer(s_Welcome.gameVersion, m_Config.gameVersion)) {
                 m_World.Notify("Game versions differ (host " + s_Welcome.gameVersion + ", you " + m_Config.gameVersion +
                     "). Some NPCs may not sync.");
@@ -696,6 +719,25 @@ void Session::HandleMessage(const Message& p_Msg, double p_Now) {
             else
                 Fail("The host ended the session (" + s_Bye.reason + ").");
 
+            break;
+        }
+
+        case MsgType::LobbyInput: {
+            MsgLobbyInput command;
+            if (m_Role == SessionRole::Host && m_State == SessionState::Connected &&
+                m_PeerHandshaken && Decode(p_Msg.payload, command) &&
+                command.serial > m_LobbyLastPeerSerial) {
+                m_LobbyLastPeerSerial = command.serial;
+                HandleLobbyInput(command);
+            }
+            break;
+        }
+
+        case MsgType::LobbySnapshot: {
+            MsgLobbySnapshot state;
+            if (m_Role == SessionRole::Client && m_State == SessionState::Connected &&
+                Decode(p_Msg.payload, state))
+                m_Lobby.ApplySnapshot(state.state);
             break;
         }
 
@@ -1152,6 +1194,7 @@ void Session::HandleHello(const MsgHello& p_Hello, double p_Now) {
     }
 
     SendSceneInfo();
+    SendLobbySnapshot(); // first authoritative lobby state for the accepted guest
 }
 
 void Session::SendSceneInfo() {
