@@ -1199,6 +1199,39 @@ void HitmanCoop::DrawPlayTab(const coop::SessionStatus& p_Status, bool p_InMissi
         ImGui::Text("Ping %.0f ms, loss %.1f%%, jitter %.0f ms%s", p_Status.stats.rttMs, p_Status.stats.lossPercent, p_Status.stats.jitterMs,
             p_Relay ? " (through the co-op server)" : "");
 
+        // Multiplayer dashboard: only confirmed session telemetry, never invented
+        // readiness or estimated timings. Rejoin does not imply mission sync until
+        // both games have completed the fresh SceneReady handshake.
+        if (ImGui::CollapsingHeader("Connection and mission dashboard", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const char* s_Mission = p_Status.synced ? "Both players synchronized"
+                : p_Status.peerBusy ? "Partner is loading"
+                : p_InMission ? "Waiting for matching mission / partner ready"
+                : "Not in a mission";
+            ImGui::Text("Connection: %s (%s)", p_Status.role == coop::SessionRole::Host ? "Hosting" : "Joined",
+                p_Relay ? "relay" : "direct / LAN");
+            ImGui::Text("Mission: %s (epoch %u)", s_Mission, p_Status.epoch);
+            ImGui::Text("Local mod: %s  |  partner: %s", c_ModVersion,
+                p_Status.peerModVersion.empty() ? "unknown" : p_Status.peerModVersion.c_str());
+            ImGui::Text("Local HITMAN: %s  |  partner: %s", m_GameVersion.c_str(),
+                p_Status.peerGameVersion.empty() ? "unknown" : p_Status.peerGameVersion.c_str());
+            ImGui::Text("Network: ping %.0f ms  |  jitter %.0f ms  |  loss %.1f%%",
+                p_Status.stats.rttMs, p_Status.stats.jitterMs, p_Status.stats.lossPercent);
+            ImGui::Text("Outbound: %.1f KB/s  |  replay buffer: %.0f ms  |  last received: %.1f s",
+                p_Status.sendKbps, p_Status.playbackDelayMs, p_Status.peerSilence);
+            ImGui::Text("NPCs tracked: %zu  |  local puppets: %zu  |  remote-owned: %zu",
+                p_Status.npcsTracked, p_Status.npcsPuppeted, p_Status.npcsOwnedByClient);
+            if (p_Status.congested)
+                ImGui::TextColored(c_Gold, "Connection is congested; NPC detail may be reduced.");
+            if (p_Status.peerBusy)
+                ImGui::TextColored(c_Gold, "Your partner is loading. The current mission stays intact.");
+            if (p_Status.peerSilence > 3.0)
+                ImGui::TextColored(c_Gold, "No recent partner packets. Check the network connection.");
+            if (!p_Status.peerModVersion.empty() && p_Status.peerModVersion != c_ModVersion)
+                ImGui::TextColored(c_Gold, "Player mod versions differ; use the same Artur Edition release.");
+            if (!p_Status.synced)
+                ImGui::TextDisabled("After rejoining, NPCs and partner avatars only resume once both games sync.");
+        }
+
         if (p_Status.role == coop::SessionRole::Client && !p_Status.hostScene.Empty() && !p_Status.synced) {
             const std::string s_Where = coop::LocationDisplayName(p_Status.hostScene.Location());
             ImGui::TextWrapped("%s is in %s (%s). %s", p_Status.peerName.c_str(), s_Where.c_str(), p_Status.hostScene.codename.c_str(),

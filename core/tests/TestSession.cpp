@@ -1167,7 +1167,42 @@ TEST(Session_ReconnectTakesTheOldPlace) {
     CHECK(HasNote(d.hostWorld, "lost connection"));
 }
 
-// Playback lag follows the link: small on a steady one, larger when packets come unevenly.
+// The host stays in the running mission while a guest loses the network entirely.
+// Rejoin must establish a fresh connection and a fresh ready handshake before
+// any world updates resume; the user should not have to restart the mission.
+TEST(Session_RejoinSameMissionAfterRealTimeout) {
+    Duo d(4601);
+    d.HostLoads(c_Miami, 4);
+    d.ClientLoads(c_Miami, 4, 0.f);
+    d.Start();
+    REQUIRE(d.StepUntilSynced(2.0));
+    d.Step(0.5);
+    CHECK(d.hostWorld.remoteShown && d.clientWorld.remoteShown);
+    const uint32_t initialEpoch = d.host.Status().epoch;
+
+    d.net->config.cut = true;
+    d.Step(std::max(d.host.Config().timeout, d.client.Config().timeout) + 1.5);
+    CHECK(d.host.Status().state == SessionState::Listening);
+    CHECK(d.client.Status().state == SessionState::Failed);
+    CHECK(!d.host.Synced() && !d.client.Synced());
+    CHECK(!d.hostWorld.remoteShown && !d.clientWorld.remoteShown);
+
+    d.net->config.cut = false;
+    d.client.Join(d.net->Open({ 0x0A000002, 50177 }), c_HostEp, d.t);
+    REQUIRE(d.StepUntilSynced(4.0));
+    CHECK(d.host.Status().state == SessionState::Connected);
+    CHECK(d.client.Status().state == SessionState::Connected);
+    CHECK(d.host.Status().epoch == initialEpoch); // host's mission was never restarted
+    CHECK(d.host.Status().peerName == "Client");
+    CHECK(d.client.Status().peerName == "Host");
+
+    d.Step(1.5);
+    CHECK(d.hostWorld.remoteShown && d.clientWorld.remoteShown);
+    CHECK(d.host.Status().synced && d.client.Status().synced);
+    CHECK(d.host.Status().npcsTracked == 4);
+}
+
+ // Playback lag follows the link: small on a steady one, larger when packets come unevenly.
 TEST(Session_PlaybackDelayFollowsTheLink) {
     const auto s_Delay = [](double p_Min, double p_Max) -> double {
         Duo d(47);

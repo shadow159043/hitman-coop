@@ -174,7 +174,9 @@ void Session::DropPeer(const std::string& p_Reason) {
     m_PeerScene = {};
     m_Conn.reset();
     m_State = SessionState::Listening;
-    m_Message = p_Reason + " Waiting for a friend to join.";
+    m_Message = p_Reason + (m_LocalInScene && m_World.IsInScene()
+        ? " Still hosting this mission. Your friend can reconnect without restarting."
+        : " Waiting for a friend to join.");
     m_PeerStateAt = -1.0;
     m_PeerBusyUntil = 0.0;
     m_PeerName.clear();
